@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 640" role="img" aria-labelledby="title desc">
+  <title id="title">Wheel-legged robot side-view kinematic abstraction</title>
+  <desc id="desc">Clean side-view diagram of the MuJoCo wheel-legged robot showing the base, hip pivots, passive knees, closed five-bar linkage, virtual leg, wheel carrier, and tire contact.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#263238"/>
+    </marker>
+    <style>
+      .title { font: 24px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-weight: 700; fill: #1f2933; }
+      .label { font: 18px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-weight: 650; fill: #1f2933; }
+      .body { font: 15px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #40515f; }
+      .small { font: 13px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #40515f; }
+      .tiny { font: 12px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #40515f; }
+      .card { fill: #ffffff; stroke: #c5d0d8; stroke-width: 1.5; rx: 8; }
+      .front { stroke: #2f80ed; stroke-width: 16; stroke-linecap: round; fill: none; }
+      .rear { stroke: #0f766e; stroke-width: 16; stroke-linecap: round; fill: none; }
+      .joint { fill: #ffffff; stroke: #1f2933; stroke-width: 4; }
+      .thin { stroke: #607d8b; stroke-width: 2; stroke-dasharray: 7 7; fill: none; }
+      .dim { stroke: #263238; stroke-width: 2; marker-start: url(#arrow); marker-end: url(#arrow); fill: none; }
+      .callout { stroke: #78909c; stroke-width: 1.8; fill: none; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="1080" height="640" fill="#f7fafc"/>
+  <text x="540" y="42" class="title" text-anchor="middle">Side-view mechanism used by the controller</text>
+
+  <line x1="84" y1="104" x2="174" y2="104" stroke="#263238" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="84" y1="104" x2="84" y2="34" stroke="#263238" stroke-width="3" marker-end="url(#arrow)"/>
+  <text x="184" y="109" class="small">+X forward</text>
+  <text x="54" y="32" class="small">+Z up</text>
+
+  <rect x="332" y="82" width="416" height="118" rx="8" fill="#d5dee3" stroke="#263238" stroke-width="3"/>
+  <rect x="382" y="59" width="110" height="34" rx="4" fill="#37474f"/>
+  <rect x="506" y="55" width="86" height="38" rx="4" fill="#2e7d32"/>
+  <rect x="604" y="66" width="82" height="28" rx="4" fill="#455a64"/>
+  <text x="540" y="128" class="label" text-anchor="middle">base body</text>
+  <text x="540" y="154" class="body" text-anchor="middle">free-floating chassis with onboard mass</text>
+
+  <line x1="444" y1="222" x2="636" y2="222" class="thin"/>
+  <circle cx="636" cy="222" r="15" class="joint"/>
+  <circle cx="444" cy="222" r="15" class="joint"/>
+  <circle cx="540" cy="222" r="10" fill="#ffb300" stroke="#263238" stroke-width="3"/>
+  <path d="M 636 222 L 698 340 L 540 470" class="front"/>
+  <path d="M 444 222 L 382 340 L 540 470" class="rear"/>
+  <circle cx="698" cy="340" r="13" class="joint"/>
+  <circle cx="382" cy="340" r="13" class="joint"/>
+  <rect x="494" y="430" width="92" height="74" rx="7" fill="#546e7a" stroke="#263238" stroke-width="3"/>
+  <circle cx="540" cy="470" r="72" fill="#263238"/>
+  <circle cx="540" cy="470" r="39" fill="#90a4ae" stroke="#1f2933" stroke-width="4"/>
+  <circle cx="540" cy="470" r="8" fill="#ffffff" stroke="#1f2933" stroke-width="3"/>
+
+  <line x1="540" y1="222" x2="540" y2="470" stroke="#ffb300" stroke-width="4" stroke-dasharray="9 8"/>
+  <text x="560" y="350" class="body">virtual leg L0</text>
+  <text x="560" y="372" class="small">0.370 m nominal</text>
+
+  <path d="M 698 340 C 723 398 672 454 588 470" fill="none" stroke="#c62828" stroke-width="4" stroke-dasharray="10 8"/>
+  <text x="726" y="420" class="body">connect equality</text>
+  <text x="726" y="442" class="small">front branch closes to carrier</text>
+
+  <line x1="444" y1="270" x2="636" y2="270" class="dim"/>
+  <text x="540" y="300" class="small" text-anchor="middle">front-rear hip spacing: 0.140 m</text>
+  <line x1="668" y1="246" x2="696" y2="306" class="dim"/>
+  <text x="720" y="285" class="small">L1 = 0.220 m</text>
+  <line x1="672" y1="374" x2="590" y2="444" class="dim"/>
+  <text x="694" y="393" class="small">L2 = 0.350 m</text>
+  <text x="540" y="574" class="label" text-anchor="middle">tire contact and wheel torque act at the ground</text>
+  <line x1="130" y1="542" x2="950" y2="542" stroke="#8d9aa5" stroke-width="3"/>
+
+  <rect x="72" y="194" width="244" height="138" class="card"/>
+  <text x="92" y="224" class="label">Actuated coordinates</text>
+  <text x="92" y="252" class="body">4 hip hinge motors</text>
+  <text x="92" y="274" class="body">2 wheel torque motors</text>
+  <text x="92" y="296" class="body">passive knees constrained by loop</text>
+  <text x="92" y="318" class="body">yellow dot: virtual hip reference</text>
+  <path d="M 316 250 C 362 236 398 225 432 222" class="callout"/>
+
+  <rect x="764" y="94" width="246" height="128" class="card"/>
+  <text x="784" y="124" class="label">Why this is MJCF</text>
+  <text x="784" y="152" class="body">URDF is a tree.</text>
+  <text x="784" y="174" class="body">The physical leg is closed.</text>
+  <text x="784" y="196" class="body">MuJoCo equality constraints</text>
+  <text x="784" y="216" class="body">enforce the missing loop.</text>
+  <path d="M 764 204 C 732 262 718 314 702 340" class="callout"/>
+
+  <rect x="78" y="454" width="236" height="78" class="card"/>
+  <circle cx="102" cy="480" r="7" fill="#2f80ed"/>
+  <text x="120" y="485" class="body">front branch</text>
+  <circle cx="102" cy="506" r="7" fill="#0f766e"/>
+  <text x="120" y="511" class="body">rear branch with wheel carrier</text>
+  <line x1="218" y1="480" x2="278" y2="480" stroke="#c62828" stroke-width="4" stroke-dasharray="8 6"/>
+  <text x="120" y="527" class="tiny">red dashed path marks loop closure</text>
+</svg>

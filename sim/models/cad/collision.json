@@ -1,0 +1,143 @@
+{
+ "armYm_xm": {
+  "type": "hulls",
+  "meshes": [
+   "armYm_xm__hull00",
+   "armYm_xm__hull01",
+   "armYm_xm__hull02",
+   "armYm_xm__hull03",
+   "armYm_xm__hull04",
+   "armYm_xm__hull05"
+  ]
+ },
+ "armYm_xp": {
+  "type": "hulls",
+  "meshes": [
+   "armYm_xp__hull00",
+   "armYm_xp__hull01",
+   "armYm_xp__hull02",
+   "armYm_xp__hull03",
+   "armYm_xp__hull04",
+   "armYm_xp__hull05"
+  ]
+ },
+ "armYp_xm": {
+  "type": "hulls",
+  "meshes": [
+   "armYp_xm__hull00",
+   "armYp_xm__hull01",
+   "armYp_xm__hull02",
+   "armYp_xm__hull03",
+   "armYp_xm__hull04",
+   "armYp_xm__hull05"
+  ]
+ },
+ "armYp_xp": {
+  "type": "hulls",
+  "meshes": [
+   "armYp_xp__hull00",
+   "armYp_xp__hull01",
+   "armYp_xp__hull02",
+   "armYp_xp__hull03",
+   "armYp_xp__hull04",
+   "armYp_xp__hull05"
+  ]
+ },
+ "base": {
+  "type": "hulls",
+  "meshes": [
+   "base__hull00",
+   "base__hull01",
+   "base__hull02",
+   "base__hull03",
+   "base__hull04",
+   "base__hull05",
+   "base__hull06",
+   "base__hull07",
+   "base__hull08",
+   "base__hull09",
+   "base__hull10",
+   "base__hull11",
+   "base__hull12",
+   "base__hull13",
+   "base__hull14",
+   "base__hull15",
+   "base__hull16",
+   "base__hull17",
+   "base__hull18",
+   "base__hull19",
+   "base__hull20",
+   "base__hull21",
+   "base__hull22",
+   "base__hull23"
+  ]
+ },
+ "gear_front": {
+  "type": "hulls",
+  "meshes": [
+   "gear_front__hull00",
+   "gear_front__hull01",
+   "gear_front__hull02",
+   "gear_front__hull03",
+   "gear_front__hull04"
+  ]
+ },
+ "gear_rear": {
+  "type": "hulls",
+  "meshes": [
+   "gear_rear__hull00",
+   "gear_rear__hull01",
+   "gear_rear__hull02"
+  ]
+ },
+ "linkYm_xm": {
+  "type": "hulls",
+  "meshes": [
+   "linkYm_xm__hull00",
+   "linkYm_xm__hull01",
+   "linkYm_xm__hull02",
+   "linkYm_xm__hull03"
+  ]
+ },
+ "linkYm_xp": {
+  "type": "hulls",
+  "meshes": [
+   "linkYm_xp__hull00",
+   "linkYm_xp__hull01",
+   "linkYm_xp__hull02",
+   "linkYm_xp__hull03"
+  ]
+ },
+ "shin_xm": {
+  "type": "hulls",
+  "meshes": [
+   "shin_xm__hull00",
+   "shin_xm__hull01",
+   "shin_xm__hull02",
+   "shin_xm__hull03",
+   "shin_xm__hull04"
+  ]
+ },
+ "shin_xp": {
+  "type": "hulls",
+  "meshes": [
+   "shin_xp__hull00",
+   "shin_xp__hull01",
+   "shin_xp__hull02",
+   "shin_xp__hull03",
+   "shin_xp__hull04"
+  ]
+ },
+ "wheel_xm": {
+  "type": "cylinder",
+  "radius": 0.10750482364604919,
+  "x0": 0.0025029510725289583,
+  "x1": 0.056002937257289886
+ },
+ "wheel_xp": {
+  "type": "cylinder",
+  "radius": 0.1075066436304914,
+  "x0": -0.05599706247448921,
+  "x1": -0.002497064182534814
+ }
+}

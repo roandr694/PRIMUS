@@ -1,0 +1,36 @@
+[
+ {
+  "name": "loop_xp",
+  "body0": "linkYm_xp",
+  "body1": "shin_xp",
+  "type": "revolute",
+  "axis": "X",
+  "local_pos0": [
+   0.002,
+   0.24787,
+   -0.2471
+  ],
+  "local_pos1": [
+   0.088,
+   -0.23213,
+   -0.26194
+  ]
+ },
+ {
+  "name": "loop_xm",
+  "body0": "linkYm_xm",
+  "body1": "shin_xm",
+  "type": "revolute",
+  "axis": "X",
+  "local_pos0": [
+   -0.002,
+   0.24787,
+   -0.2471
+  ],
+  "local_pos1": [
+   -0.088,
+   -0.23213,
+   -0.26194
+  ]
+ }
+]

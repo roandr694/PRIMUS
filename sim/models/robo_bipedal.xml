@@ -1,0 +1,416 @@
+<mujoco model="robo_bipedal">
+  <!-- GERADO por scripts/generate_mjcf.py a partir da montagem "Robo bipedal - montagem principal" (Fusion).
+       Frames: X lateral (X+ = perna xp = direita), Y frente, Z cima. Unidades SI.
+       Cada perna e um 5 barras FECHADO: o laco fecha no eixo da roda (equality/connect "loop_*").
+       Todas as juntas giram em +X do corpo. Angulo 0 = pose do CAD.
+       Atuadores: ctrl = torque NO MOTOR [N.m]; gear = reducao 9:1 (torque na junta = 9*ctrl). -->
+  <compiler angle="degree" meshdir="meshes" autolimits="true"/>
+  <option timestep="0.001" integrator="implicitfast" cone="elliptic" impratio="10"/>
+  <default>
+    <joint damping="0.05" axis="1 0 0"/>
+    <default class="hip"><joint armature="0.006"/></default>
+    <default class="wheel"><joint armature="0.006" damping="0.01"/></default>
+    <default class="passive"><joint damping="0.01"/></default>
+    <default class="gear"><joint damping="0.02" armature="0.0005"/></default>
+    <default class="visual"><geom type="mesh" contype="0" conaffinity="0" group="2" density="0"/></default>
+    <default class="collision"><geom type="mesh" contype="2" conaffinity="1" group="3" density="0" rgba="0.8 0.3 0.3 0.4" friction="0.8 0.02 0.002"/></default>
+  </default>
+  <asset>
+    <mesh name="armYm_xm__0p25_0p25_0p25" file="visual/armYm_xm__0p25_0p25_0p25.stl"/>
+    <mesh name="armYm_xm__0p62_0p62_0p62" file="visual/armYm_xm__0p62_0p62_0p62.stl"/>
+    <mesh name="armYm_xm__1p00_0p75_0p50" file="visual/armYm_xm__1p00_0p75_0p50.stl"/>
+    <mesh name="armYm_xm__1p00_1p00_1p00" file="visual/armYm_xm__1p00_1p00_1p00.stl"/>
+    <mesh name="armYm_xp__0p25_0p25_0p25" file="visual/armYm_xp__0p25_0p25_0p25.stl"/>
+    <mesh name="armYm_xp__0p62_0p62_0p62" file="visual/armYm_xp__0p62_0p62_0p62.stl"/>
+    <mesh name="armYm_xp__1p00_0p75_0p50" file="visual/armYm_xp__1p00_0p75_0p50.stl"/>
+    <mesh name="armYm_xp__1p00_1p00_1p00" file="visual/armYm_xp__1p00_1p00_1p00.stl"/>
+    <mesh name="armYp_xm__0p25_0p25_0p25" file="visual/armYp_xm__0p25_0p25_0p25.stl"/>
+    <mesh name="armYp_xm__0p62_0p62_0p62" file="visual/armYp_xm__0p62_0p62_0p62.stl"/>
+    <mesh name="armYp_xm__1p00_0p75_0p50" file="visual/armYp_xm__1p00_0p75_0p50.stl"/>
+    <mesh name="armYp_xm__1p00_1p00_1p00" file="visual/armYp_xm__1p00_1p00_1p00.stl"/>
+    <mesh name="armYp_xp__0p25_0p25_0p25" file="visual/armYp_xp__0p25_0p25_0p25.stl"/>
+    <mesh name="armYp_xp__0p62_0p62_0p62" file="visual/armYp_xp__0p62_0p62_0p62.stl"/>
+    <mesh name="armYp_xp__1p00_0p75_0p50" file="visual/armYp_xp__1p00_0p75_0p50.stl"/>
+    <mesh name="armYp_xp__1p00_1p00_1p00" file="visual/armYp_xp__1p00_1p00_1p00.stl"/>
+    <mesh name="base__0p00_0p62_0p00" file="visual/base__0p00_0p62_0p00.stl"/>
+    <mesh name="base__0p12_0p12_0p12" file="visual/base__0p12_0p12_0p12.stl"/>
+    <mesh name="base__0p25_0p00_0p00" file="visual/base__0p25_0p00_0p00.stl"/>
+    <mesh name="base__0p25_0p25_0p25" file="visual/base__0p25_0p25_0p25.stl"/>
+    <mesh name="base__0p25_0p25_0p62" file="visual/base__0p25_0p25_0p62.stl"/>
+    <mesh name="base__0p25_0p50_0p38" file="visual/base__0p25_0p50_0p38.stl"/>
+    <mesh name="base__0p38_0p38_0p38" file="visual/base__0p38_0p38_0p38.stl"/>
+    <mesh name="base__0p50_0p50_0p50" file="visual/base__0p50_0p50_0p50.stl"/>
+    <mesh name="base__0p62_0p62_0p62" file="visual/base__0p62_0p62_0p62.stl"/>
+    <mesh name="base__0p75_0p75_0p75" file="visual/base__0p75_0p75_0p75.stl"/>
+    <mesh name="base__0p75_0p88_0p88" file="visual/base__0p75_0p88_0p88.stl"/>
+    <mesh name="base__0p88_0p00_0p00" file="visual/base__0p88_0p00_0p00.stl"/>
+    <mesh name="base__0p88_0p50_0p00" file="visual/base__0p88_0p50_0p00.stl"/>
+    <mesh name="base__0p88_0p75_0p75" file="visual/base__0p88_0p75_0p75.stl"/>
+    <mesh name="base__0p88_0p88_0p88" file="visual/base__0p88_0p88_0p88.stl"/>
+    <mesh name="base__1p00_0p00_0p00" file="visual/base__1p00_0p00_0p00.stl"/>
+    <mesh name="base__1p00_0p75_0p50" file="visual/base__1p00_0p75_0p50.stl"/>
+    <mesh name="base__1p00_1p00_0p88" file="visual/base__1p00_1p00_0p88.stl"/>
+    <mesh name="base__1p00_1p00_1p00" file="visual/base__1p00_1p00_1p00.stl"/>
+    <mesh name="gear_front__0p12_0p12_0p12" file="visual/gear_front__0p12_0p12_0p12.stl"/>
+    <mesh name="gear_front__0p25_0p25_0p25" file="visual/gear_front__0p25_0p25_0p25.stl"/>
+    <mesh name="gear_front__0p75_0p75_0p75" file="visual/gear_front__0p75_0p75_0p75.stl"/>
+    <mesh name="gear_rear__0p12_0p12_0p12" file="visual/gear_rear__0p12_0p12_0p12.stl"/>
+    <mesh name="gear_rear__0p25_0p25_0p25" file="visual/gear_rear__0p25_0p25_0p25.stl"/>
+    <mesh name="gear_rear__0p75_0p75_0p75" file="visual/gear_rear__0p75_0p75_0p75.stl"/>
+    <mesh name="linkYm_xm__0p25_0p25_0p25" file="visual/linkYm_xm__0p25_0p25_0p25.stl"/>
+    <mesh name="linkYm_xm__0p62_0p62_0p62" file="visual/linkYm_xm__0p62_0p62_0p62.stl"/>
+    <mesh name="linkYm_xm__0p75_0p75_0p75" file="visual/linkYm_xm__0p75_0p75_0p75.stl"/>
+    <mesh name="linkYm_xm__1p00_0p75_0p50" file="visual/linkYm_xm__1p00_0p75_0p50.stl"/>
+    <mesh name="linkYm_xm__1p00_1p00_1p00" file="visual/linkYm_xm__1p00_1p00_1p00.stl"/>
+    <mesh name="linkYm_xp__0p25_0p25_0p25" file="visual/linkYm_xp__0p25_0p25_0p25.stl"/>
+    <mesh name="linkYm_xp__0p62_0p62_0p62" file="visual/linkYm_xp__0p62_0p62_0p62.stl"/>
+    <mesh name="linkYm_xp__0p75_0p75_0p75" file="visual/linkYm_xp__0p75_0p75_0p75.stl"/>
+    <mesh name="linkYm_xp__1p00_0p75_0p50" file="visual/linkYm_xp__1p00_0p75_0p50.stl"/>
+    <mesh name="linkYm_xp__1p00_1p00_1p00" file="visual/linkYm_xp__1p00_1p00_1p00.stl"/>
+    <mesh name="shin_xm__0p12_0p12_0p12" file="visual/shin_xm__0p12_0p12_0p12.stl"/>
+    <mesh name="shin_xm__0p25_0p25_0p25" file="visual/shin_xm__0p25_0p25_0p25.stl"/>
+    <mesh name="shin_xm__0p62_0p62_0p62" file="visual/shin_xm__0p62_0p62_0p62.stl"/>
+    <mesh name="shin_xm__0p75_0p62_0p25" file="visual/shin_xm__0p75_0p62_0p25.stl"/>
+    <mesh name="shin_xm__0p75_0p75_0p75" file="visual/shin_xm__0p75_0p75_0p75.stl"/>
+    <mesh name="shin_xm__1p00_0p75_0p50" file="visual/shin_xm__1p00_0p75_0p50.stl"/>
+    <mesh name="shin_xm__1p00_1p00_1p00" file="visual/shin_xm__1p00_1p00_1p00.stl"/>
+    <mesh name="shin_xp__0p12_0p12_0p12" file="visual/shin_xp__0p12_0p12_0p12.stl"/>
+    <mesh name="shin_xp__0p25_0p25_0p25" file="visual/shin_xp__0p25_0p25_0p25.stl"/>
+    <mesh name="shin_xp__0p62_0p62_0p62" file="visual/shin_xp__0p62_0p62_0p62.stl"/>
+    <mesh name="shin_xp__0p75_0p62_0p25" file="visual/shin_xp__0p75_0p62_0p25.stl"/>
+    <mesh name="shin_xp__0p75_0p75_0p75" file="visual/shin_xp__0p75_0p75_0p75.stl"/>
+    <mesh name="shin_xp__1p00_0p75_0p50" file="visual/shin_xp__1p00_0p75_0p50.stl"/>
+    <mesh name="shin_xp__1p00_1p00_1p00" file="visual/shin_xp__1p00_1p00_1p00.stl"/>
+    <mesh name="wheel_xm__0p12_0p12_0p12" file="visual/wheel_xm__0p12_0p12_0p12.stl"/>
+    <mesh name="wheel_xm__0p25_0p25_0p25" file="visual/wheel_xm__0p25_0p25_0p25.stl"/>
+    <mesh name="wheel_xm__0p62_0p62_0p62" file="visual/wheel_xm__0p62_0p62_0p62.stl"/>
+    <mesh name="wheel_xm__1p00_0p75_0p50" file="visual/wheel_xm__1p00_0p75_0p50.stl"/>
+    <mesh name="wheel_xp__0p12_0p12_0p12" file="visual/wheel_xp__0p12_0p12_0p12.stl"/>
+    <mesh name="wheel_xp__0p25_0p25_0p25" file="visual/wheel_xp__0p25_0p25_0p25.stl"/>
+    <mesh name="wheel_xp__0p62_0p62_0p62" file="visual/wheel_xp__0p62_0p62_0p62.stl"/>
+    <mesh name="wheel_xp__1p00_0p75_0p50" file="visual/wheel_xp__1p00_0p75_0p50.stl"/>
+    <mesh name="armYm_xm__hull00" file="collision/armYm_xm__hull00.stl"/>
+    <mesh name="armYm_xm__hull01" file="collision/armYm_xm__hull01.stl"/>
+    <mesh name="armYm_xm__hull02" file="collision/armYm_xm__hull02.stl"/>
+    <mesh name="armYm_xm__hull03" file="collision/armYm_xm__hull03.stl"/>
+    <mesh name="armYm_xm__hull04" file="collision/armYm_xm__hull04.stl"/>
+    <mesh name="armYm_xm__hull05" file="collision/armYm_xm__hull05.stl"/>
+    <mesh name="armYm_xp__hull00" file="collision/armYm_xp__hull00.stl"/>
+    <mesh name="armYm_xp__hull01" file="collision/armYm_xp__hull01.stl"/>
+    <mesh name="armYm_xp__hull02" file="collision/armYm_xp__hull02.stl"/>
+    <mesh name="armYm_xp__hull03" file="collision/armYm_xp__hull03.stl"/>
+    <mesh name="armYm_xp__hull04" file="collision/armYm_xp__hull04.stl"/>
+    <mesh name="armYm_xp__hull05" file="collision/armYm_xp__hull05.stl"/>
+    <mesh name="armYp_xm__hull00" file="collision/armYp_xm__hull00.stl"/>
+    <mesh name="armYp_xm__hull01" file="collision/armYp_xm__hull01.stl"/>
+    <mesh name="armYp_xm__hull02" file="collision/armYp_xm__hull02.stl"/>
+    <mesh name="armYp_xm__hull03" file="collision/armYp_xm__hull03.stl"/>
+    <mesh name="armYp_xm__hull04" file="collision/armYp_xm__hull04.stl"/>
+    <mesh name="armYp_xm__hull05" file="collision/armYp_xm__hull05.stl"/>
+    <mesh name="armYp_xp__hull00" file="collision/armYp_xp__hull00.stl"/>
+    <mesh name="armYp_xp__hull01" file="collision/armYp_xp__hull01.stl"/>
+    <mesh name="armYp_xp__hull02" file="collision/armYp_xp__hull02.stl"/>
+    <mesh name="armYp_xp__hull03" file="collision/armYp_xp__hull03.stl"/>
+    <mesh name="armYp_xp__hull04" file="collision/armYp_xp__hull04.stl"/>
+    <mesh name="armYp_xp__hull05" file="collision/armYp_xp__hull05.stl"/>
+    <mesh name="base__hull00" file="collision/base__hull00.stl"/>
+    <mesh name="base__hull01" file="collision/base__hull01.stl"/>
+    <mesh name="base__hull02" file="collision/base__hull02.stl"/>
+    <mesh name="base__hull03" file="collision/base__hull03.stl"/>
+    <mesh name="base__hull04" file="collision/base__hull04.stl"/>
+    <mesh name="base__hull05" file="collision/base__hull05.stl"/>
+    <mesh name="base__hull06" file="collision/base__hull06.stl"/>
+    <mesh name="base__hull07" file="collision/base__hull07.stl"/>
+    <mesh name="base__hull08" file="collision/base__hull08.stl"/>
+    <mesh name="base__hull09" file="collision/base__hull09.stl"/>
+    <mesh name="base__hull10" file="collision/base__hull10.stl"/>
+    <mesh name="base__hull11" file="collision/base__hull11.stl"/>
+    <mesh name="base__hull12" file="collision/base__hull12.stl"/>
+    <mesh name="base__hull13" file="collision/base__hull13.stl"/>
+    <mesh name="base__hull14" file="collision/base__hull14.stl"/>
+    <mesh name="base__hull15" file="collision/base__hull15.stl"/>
+    <mesh name="base__hull16" file="collision/base__hull16.stl"/>
+    <mesh name="base__hull17" file="collision/base__hull17.stl"/>
+    <mesh name="base__hull18" file="collision/base__hull18.stl"/>
+    <mesh name="base__hull19" file="collision/base__hull19.stl"/>
+    <mesh name="base__hull20" file="collision/base__hull20.stl"/>
+    <mesh name="base__hull21" file="collision/base__hull21.stl"/>
+    <mesh name="base__hull22" file="collision/base__hull22.stl"/>
+    <mesh name="base__hull23" file="collision/base__hull23.stl"/>
+    <mesh name="gear_front__hull00" file="collision/gear_front__hull00.stl"/>
+    <mesh name="gear_front__hull01" file="collision/gear_front__hull01.stl"/>
+    <mesh name="gear_front__hull02" file="collision/gear_front__hull02.stl"/>
+    <mesh name="gear_front__hull03" file="collision/gear_front__hull03.stl"/>
+    <mesh name="gear_front__hull04" file="collision/gear_front__hull04.stl"/>
+    <mesh name="gear_rear__hull00" file="collision/gear_rear__hull00.stl"/>
+    <mesh name="gear_rear__hull01" file="collision/gear_rear__hull01.stl"/>
+    <mesh name="gear_rear__hull02" file="collision/gear_rear__hull02.stl"/>
+    <mesh name="linkYm_xm__hull00" file="collision/linkYm_xm__hull00.stl"/>
+    <mesh name="linkYm_xm__hull01" file="collision/linkYm_xm__hull01.stl"/>
+    <mesh name="linkYm_xm__hull02" file="collision/linkYm_xm__hull02.stl"/>
+    <mesh name="linkYm_xm__hull03" file="collision/linkYm_xm__hull03.stl"/>
+    <mesh name="linkYm_xp__hull00" file="collision/linkYm_xp__hull00.stl"/>
+    <mesh name="linkYm_xp__hull01" file="collision/linkYm_xp__hull01.stl"/>
+    <mesh name="linkYm_xp__hull02" file="collision/linkYm_xp__hull02.stl"/>
+    <mesh name="linkYm_xp__hull03" file="collision/linkYm_xp__hull03.stl"/>
+    <mesh name="shin_xm__hull00" file="collision/shin_xm__hull00.stl"/>
+    <mesh name="shin_xm__hull01" file="collision/shin_xm__hull01.stl"/>
+    <mesh name="shin_xm__hull02" file="collision/shin_xm__hull02.stl"/>
+    <mesh name="shin_xm__hull03" file="collision/shin_xm__hull03.stl"/>
+    <mesh name="shin_xm__hull04" file="collision/shin_xm__hull04.stl"/>
+    <mesh name="shin_xp__hull00" file="collision/shin_xp__hull00.stl"/>
+    <mesh name="shin_xp__hull01" file="collision/shin_xp__hull01.stl"/>
+    <mesh name="shin_xp__hull02" file="collision/shin_xp__hull02.stl"/>
+    <mesh name="shin_xp__hull03" file="collision/shin_xp__hull03.stl"/>
+    <mesh name="shin_xp__hull04" file="collision/shin_xp__hull04.stl"/>
+  </asset>
+  <worldbody>
+    <body name="base" pos="0 0 0.5037">
+      <freejoint name="root"/>
+      <inertial pos="-0.0119725 0.00916149 -0.0188345" mass="7.63193" fullinertia="0.074045 0.114747 0.145606 0.000221429 0.000222548 7.87315e-05"/>
+      <geom class="visual" mesh="base__0p00_0p62_0p00" rgba="0 0.62 0 1"/>
+      <geom class="visual" mesh="base__0p12_0p12_0p12" rgba="0.12 0.12 0.12 1"/>
+      <geom class="visual" mesh="base__0p25_0p00_0p00" rgba="0.25 0 0 1"/>
+      <geom class="visual" mesh="base__0p25_0p25_0p25" rgba="0.25 0.25 0.25 1"/>
+      <geom class="visual" mesh="base__0p25_0p25_0p62" rgba="0.25 0.25 0.62 1"/>
+      <geom class="visual" mesh="base__0p25_0p50_0p38" rgba="0.25 0.5 0.38 1"/>
+      <geom class="visual" mesh="base__0p38_0p38_0p38" rgba="0.38 0.38 0.38 1"/>
+      <geom class="visual" mesh="base__0p50_0p50_0p50" rgba="0.5 0.5 0.5 1"/>
+      <geom class="visual" mesh="base__0p62_0p62_0p62" rgba="0.62 0.62 0.62 1"/>
+      <geom class="visual" mesh="base__0p75_0p75_0p75" rgba="0.75 0.75 0.75 1"/>
+      <geom class="visual" mesh="base__0p75_0p88_0p88" rgba="0.75 0.88 0.88 1"/>
+      <geom class="visual" mesh="base__0p88_0p00_0p00" rgba="0.88 0 0 1"/>
+      <geom class="visual" mesh="base__0p88_0p50_0p00" rgba="0.88 0.5 0 1"/>
+      <geom class="visual" mesh="base__0p88_0p75_0p75" rgba="0.88 0.75 0.75 1"/>
+      <geom class="visual" mesh="base__0p88_0p88_0p88" rgba="0.88 0.88 0.88 1"/>
+      <geom class="visual" mesh="base__1p00_0p00_0p00" rgba="1 0 0 1"/>
+      <geom class="visual" mesh="base__1p00_0p75_0p50" rgba="1 0.75 0.5 1"/>
+      <geom class="visual" mesh="base__1p00_1p00_0p88" rgba="1 1 0.88 1"/>
+      <geom class="visual" mesh="base__1p00_1p00_1p00" rgba="1 1 1 1"/>
+      <geom class="collision" mesh="base__hull00"/>
+      <geom class="collision" mesh="base__hull01"/>
+      <geom class="collision" mesh="base__hull02"/>
+      <geom class="collision" mesh="base__hull03"/>
+      <geom class="collision" mesh="base__hull04"/>
+      <geom class="collision" mesh="base__hull05"/>
+      <geom class="collision" mesh="base__hull06"/>
+      <geom class="collision" mesh="base__hull07"/>
+      <geom class="collision" mesh="base__hull08"/>
+      <geom class="collision" mesh="base__hull09"/>
+      <geom class="collision" mesh="base__hull10"/>
+      <geom class="collision" mesh="base__hull11"/>
+      <geom class="collision" mesh="base__hull12"/>
+      <geom class="collision" mesh="base__hull13"/>
+      <geom class="collision" mesh="base__hull14"/>
+      <geom class="collision" mesh="base__hull15"/>
+      <geom class="collision" mesh="base__hull16"/>
+      <geom class="collision" mesh="base__hull17"/>
+      <geom class="collision" mesh="base__hull18"/>
+      <geom class="collision" mesh="base__hull19"/>
+      <geom class="collision" mesh="base__hull20"/>
+      <geom class="collision" mesh="base__hull21"/>
+      <geom class="collision" mesh="base__hull22"/>
+      <geom class="collision" mesh="base__hull23"/>
+      <site name="imu" pos="-0.0116 0.0257 -0.0387" size="0.006" rgba="0 0.6 1 1"/>
+      <site name="hip_Yp_xp" pos="0.12835 0.09 -0.00035" size="0.005" rgba="0 1 0 1"/>
+      <site name="hip_Ym_xp" pos="0.21435 -0.05 -0.00035" size="0.005" rgba="0 1 0 1"/>
+      <site name="hip_mid_xp" pos="0.17135 0.02 -0.00035" size="0.006" rgba="1 1 0 1"/>
+      <site name="hip_Yp_xm" pos="-0.15165 0.09 -0.00035" size="0.005" rgba="0 1 0 1"/>
+      <site name="hip_Ym_xm" pos="-0.23765 -0.05 -0.00035" size="0.005" rgba="0 1 0 1"/>
+      <site name="hip_mid_xm" pos="-0.19465 0.02 -0.00035" size="0.006" rgba="1 1 0 1"/>
+      <body name="armYp_xp" pos="0.12835 0.09 -0.00035">
+        <inertial pos="0.000513046 0.0804023 -0.0584828" mass="0.330402" fullinertia="0.0020984 0.000794366 0.00139636 -5.2071e-05 3.68994e-05 0.000876394"/>
+        <joint name="hip_Yp_xp" class="hip"/>
+        <geom class="visual" mesh="armYp_xp__0p25_0p25_0p25" rgba="0.25 0.25 0.25 1"/>
+        <geom class="visual" mesh="armYp_xp__0p62_0p62_0p62" rgba="0.62 0.62 0.62 1"/>
+        <geom class="visual" mesh="armYp_xp__1p00_0p75_0p50" rgba="1 0.75 0.5 1"/>
+        <geom class="visual" mesh="armYp_xp__1p00_1p00_1p00" rgba="1 1 1 1"/>
+        <geom class="collision" mesh="armYp_xp__hull00"/>
+        <geom class="collision" mesh="armYp_xp__hull01"/>
+        <geom class="collision" mesh="armYp_xp__hull02"/>
+        <geom class="collision" mesh="armYp_xp__hull03"/>
+        <geom class="collision" mesh="armYp_xp__hull04"/>
+        <geom class="collision" mesh="armYp_xp__hull05"/>
+        <body name="shin_xp" pos="-0.013 0.17608 -0.13189">
+          <inertial pos="0.0225036 -0.173777 -0.196084" mass="1.35266" fullinertia="0.0217693 0.0129589 0.0104943 0.000682066 0.000769461 -0.010127"/>
+          <joint name="knee_Yp_xp" class="passive"/>
+          <geom class="visual" mesh="shin_xp__0p12_0p12_0p12" rgba="0.12 0.12 0.12 1"/>
+          <geom class="visual" mesh="shin_xp__0p25_0p25_0p25" rgba="0.25 0.25 0.25 1"/>
+          <geom class="visual" mesh="shin_xp__0p62_0p62_0p62" rgba="0.62 0.62 0.62 1"/>
+          <geom class="visual" mesh="shin_xp__0p75_0p62_0p25" rgba="0.75 0.62 0.25 1"/>
+          <geom class="visual" mesh="shin_xp__0p75_0p75_0p75" rgba="0.75 0.75 0.75 1"/>
+          <geom class="visual" mesh="shin_xp__1p00_0p75_0p50" rgba="1 0.75 0.5 1"/>
+          <geom class="visual" mesh="shin_xp__1p00_1p00_1p00" rgba="1 1 1 1"/>
+          <geom class="collision" mesh="shin_xp__hull00"/>
+          <geom class="collision" mesh="shin_xp__hull01"/>
+          <geom class="collision" mesh="shin_xp__hull02"/>
+          <geom class="collision" mesh="shin_xp__hull03"/>
+          <geom class="collision" mesh="shin_xp__hull04"/>
+          <site name="wheel_center_xp" pos="0.088 -0.23213 -0.26194" size="0.006" rgba="1 0.5 0 1"/>
+          <body name="wheel_xp" pos="0.088 -0.23213 -0.26194">
+            <inertial pos="-0.0288597 5.29484e-06 -4.1767e-06" mass="1.30915" fullinertia="0.00805434 0.00425595 0.00425594 -6.13149e-10 1.27406e-09 -4.28711e-09"/>
+            <joint name="wheel_xp" class="wheel"/>
+            <geom class="visual" mesh="wheel_xp__0p12_0p12_0p12" rgba="0.12 0.12 0.12 1"/>
+            <geom class="visual" mesh="wheel_xp__0p25_0p25_0p25" rgba="0.25 0.25 0.25 1"/>
+            <geom class="visual" mesh="wheel_xp__0p62_0p62_0p62" rgba="0.62 0.62 0.62 1"/>
+            <geom class="visual" mesh="wheel_xp__1p00_0p75_0p50" rgba="1 0.75 0.5 1"/>
+            <geom class="collision" name="wheel_xp_tire" type="cylinder" fromto="-0.05600 0 0 -0.00250 0 0" size="0.10751" friction="1.0 0.02 0.002"/>
+          </body>
+        </body>
+      </body>
+      <body name="armYm_xp" pos="0.21435 -0.05 -0.00035">
+        <inertial pos="0.000507746 -0.0749994 -0.0652675" mass="0.330403" fullinertia="0.00209842 0.000951121 0.00123962 4.86775e-05 4.13161e-05 -0.000915353"/>
+        <joint name="hip_Ym_xp" class="hip"/>
+        <geom class="visual" mesh="armYm_xp__0p25_0p25_0p25" rgba="0.25 0.25 0.25 1"/>
+        <geom class="visual" mesh="armYm_xp__0p62_0p62_0p62" rgba="0.62 0.62 0.62 1"/>
+        <geom class="visual" mesh="armYm_xp__1p00_0p75_0p50" rgba="1 0.75 0.5 1"/>
+        <geom class="visual" mesh="armYm_xp__1p00_1p00_1p00" rgba="1 1 1 1"/>
+        <geom class="collision" mesh="armYm_xp__hull00"/>
+        <geom class="collision" mesh="armYm_xp__hull01"/>
+        <geom class="collision" mesh="armYm_xp__hull02"/>
+        <geom class="collision" mesh="armYm_xp__hull03"/>
+        <geom class="collision" mesh="armYm_xp__hull04"/>
+        <geom class="collision" mesh="armYm_xp__hull05"/>
+        <body name="linkYm_xp" pos="-0.013 -0.16392 -0.14673">
+          <inertial pos="0.0139898 0.111838 -0.11149" mass="0.645251" fullinertia="0.00809801 0.00407877 0.00410329 1.12678e-06 -1.11816e-06 0.00398094"/>
+          <joint name="knee_Ym_xp" class="passive"/>
+          <geom class="visual" mesh="linkYm_xp__0p25_0p25_0p25" rgba="0.25 0.25 0.25 1"/>
+          <geom class="visual" mesh="linkYm_xp__0p62_0p62_0p62" rgba="0.62 0.62 0.62 1"/>
+          <geom class="visual" mesh="linkYm_xp__0p75_0p75_0p75" rgba="0.75 0.75 0.75 1"/>
+          <geom class="visual" mesh="linkYm_xp__1p00_0p75_0p50" rgba="1 0.75 0.5 1"/>
+          <geom class="visual" mesh="linkYm_xp__1p00_1p00_1p00" rgba="1 1 1 1"/>
+          <geom class="collision" mesh="linkYm_xp__hull00"/>
+          <geom class="collision" mesh="linkYm_xp__hull01"/>
+          <geom class="collision" mesh="linkYm_xp__hull02"/>
+          <geom class="collision" mesh="linkYm_xp__hull03"/>
+          <site name="foot_xp" pos="0.002 0.24787 -0.2471" size="0.004"/>
+        </body>
+      </body>
+      <body name="armYp_xm" pos="-0.15165 0.09 -0.00035">
+        <inertial pos="-0.000513052 0.0804022 -0.0584827" mass="0.330403" fullinertia="0.0020984 0.000794367 0.00139636 5.20712e-05 -3.68995e-05 0.000876395"/>
+        <joint name="hip_Yp_xm" class="hip"/>
+        <geom class="visual" mesh="armYp_xm__0p25_0p25_0p25" rgba="0.25 0.25 0.25 1"/>
+        <geom class="visual" mesh="armYp_xm__0p62_0p62_0p62" rgba="0.62 0.62 0.62 1"/>
+        <geom class="visual" mesh="armYp_xm__1p00_0p75_0p50" rgba="1 0.75 0.5 1"/>
+        <geom class="visual" mesh="armYp_xm__1p00_1p00_1p00" rgba="1 1 1 1"/>
+        <geom class="collision" mesh="armYp_xm__hull00"/>
+        <geom class="collision" mesh="armYp_xm__hull01"/>
+        <geom class="collision" mesh="armYp_xm__hull02"/>
+        <geom class="collision" mesh="armYp_xm__hull03"/>
+        <geom class="collision" mesh="armYp_xm__hull04"/>
+        <geom class="collision" mesh="armYp_xm__hull05"/>
+        <body name="shin_xm" pos="0.013 0.17608 -0.13189">
+          <inertial pos="-0.0224977 -0.173761 -0.196098" mass="1.35266" fullinertia="0.0217693 0.0129482 0.010505 -0.000681844 -0.000769657 -0.0101283"/>
+          <joint name="knee_Yp_xm" class="passive"/>
+          <geom class="visual" mesh="shin_xm__0p12_0p12_0p12" rgba="0.12 0.12 0.12 1"/>
+          <geom class="visual" mesh="shin_xm__0p25_0p25_0p25" rgba="0.25 0.25 0.25 1"/>
+          <geom class="visual" mesh="shin_xm__0p62_0p62_0p62" rgba="0.62 0.62 0.62 1"/>
+          <geom class="visual" mesh="shin_xm__0p75_0p62_0p25" rgba="0.75 0.62 0.25 1"/>
+          <geom class="visual" mesh="shin_xm__0p75_0p75_0p75" rgba="0.75 0.75 0.75 1"/>
+          <geom class="visual" mesh="shin_xm__1p00_0p75_0p50" rgba="1 0.75 0.5 1"/>
+          <geom class="visual" mesh="shin_xm__1p00_1p00_1p00" rgba="1 1 1 1"/>
+          <geom class="collision" mesh="shin_xm__hull00"/>
+          <geom class="collision" mesh="shin_xm__hull01"/>
+          <geom class="collision" mesh="shin_xm__hull02"/>
+          <geom class="collision" mesh="shin_xm__hull03"/>
+          <geom class="collision" mesh="shin_xm__hull04"/>
+          <site name="wheel_center_xm" pos="-0.088 -0.23213 -0.26194" size="0.006" rgba="1 0.5 0 1"/>
+          <body name="wheel_xm" pos="-0.088 -0.23213 -0.26194">
+            <inertial pos="0.0288656 3.87016e-06 -3.0129e-06" mass="1.30915" fullinertia="0.00805434 0.00425595 0.00425594 -5.70397e-10 -1.29376e-09 4.78609e-09"/>
+            <joint name="wheel_xm" class="wheel"/>
+            <geom class="visual" mesh="wheel_xm__0p12_0p12_0p12" rgba="0.12 0.12 0.12 1"/>
+            <geom class="visual" mesh="wheel_xm__0p25_0p25_0p25" rgba="0.25 0.25 0.25 1"/>
+            <geom class="visual" mesh="wheel_xm__0p62_0p62_0p62" rgba="0.62 0.62 0.62 1"/>
+            <geom class="visual" mesh="wheel_xm__1p00_0p75_0p50" rgba="1 0.75 0.5 1"/>
+            <geom class="collision" name="wheel_xm_tire" type="cylinder" fromto="0.00250 0 0 0.05600 0 0" size="0.10750" friction="1.0 0.02 0.002"/>
+          </body>
+        </body>
+      </body>
+      <body name="armYm_xm" pos="-0.23765 -0.05 -0.00035">
+        <inertial pos="-0.000507748 -0.0749996 -0.0652676" mass="0.330402" fullinertia="0.00209841 0.000951121 0.00123962 -4.86776e-05 -4.13162e-05 -0.000915352"/>
+        <joint name="hip_Ym_xm" class="hip"/>
+        <geom class="visual" mesh="armYm_xm__0p25_0p25_0p25" rgba="0.25 0.25 0.25 1"/>
+        <geom class="visual" mesh="armYm_xm__0p62_0p62_0p62" rgba="0.62 0.62 0.62 1"/>
+        <geom class="visual" mesh="armYm_xm__1p00_0p75_0p50" rgba="1 0.75 0.5 1"/>
+        <geom class="visual" mesh="armYm_xm__1p00_1p00_1p00" rgba="1 1 1 1"/>
+        <geom class="collision" mesh="armYm_xm__hull00"/>
+        <geom class="collision" mesh="armYm_xm__hull01"/>
+        <geom class="collision" mesh="armYm_xm__hull02"/>
+        <geom class="collision" mesh="armYm_xm__hull03"/>
+        <geom class="collision" mesh="armYm_xm__hull04"/>
+        <geom class="collision" mesh="armYm_xm__hull05"/>
+        <body name="linkYm_xm" pos="0.013 -0.16392 -0.14673">
+          <inertial pos="-0.0139839 0.111838 -0.111489" mass="0.645251" fullinertia="0.00809801 0.00407854 0.00410352 -1.12166e-06 1.1233e-06 0.00398094"/>
+          <joint name="knee_Ym_xm" class="passive"/>
+          <geom class="visual" mesh="linkYm_xm__0p25_0p25_0p25" rgba="0.25 0.25 0.25 1"/>
+          <geom class="visual" mesh="linkYm_xm__0p62_0p62_0p62" rgba="0.62 0.62 0.62 1"/>
+          <geom class="visual" mesh="linkYm_xm__0p75_0p75_0p75" rgba="0.75 0.75 0.75 1"/>
+          <geom class="visual" mesh="linkYm_xm__1p00_0p75_0p50" rgba="1 0.75 0.5 1"/>
+          <geom class="visual" mesh="linkYm_xm__1p00_1p00_1p00" rgba="1 1 1 1"/>
+          <geom class="collision" mesh="linkYm_xm__hull00"/>
+          <geom class="collision" mesh="linkYm_xm__hull01"/>
+          <geom class="collision" mesh="linkYm_xm__hull02"/>
+          <geom class="collision" mesh="linkYm_xm__hull03"/>
+          <site name="foot_xm" pos="-0.002 0.24787 -0.2471" size="0.004"/>
+        </body>
+      </body>
+      <body name="gear_front" pos="-0.00965 0.08 -0.154">
+        <inertial pos="-0.000433961 0.012489 -0.0467737" mass="0.0597491" fullinertia="0.000123155 0.00018986 8.4319e-05 1.40647e-06 -4.8392e-06 3.06393e-05"/>
+        <joint name="gear_front" class="gear" range="-105.0 0.0"/>
+        <geom class="visual" mesh="gear_front__0p12_0p12_0p12" rgba="0.12 0.12 0.12 1"/>
+        <geom class="visual" mesh="gear_front__0p25_0p25_0p25" rgba="0.25 0.25 0.25 1"/>
+        <geom class="visual" mesh="gear_front__0p75_0p75_0p75" rgba="0.75 0.75 0.75 1"/>
+        <geom class="collision" mesh="gear_front__hull00"/>
+        <geom class="collision" mesh="gear_front__hull01"/>
+        <geom class="collision" mesh="gear_front__hull02"/>
+        <geom class="collision" mesh="gear_front__hull03"/>
+        <geom class="collision" mesh="gear_front__hull04"/>
+      </body>
+      <body name="gear_rear" pos="-0.0109 -0.064 -0.154">
+        <inertial pos="-0.000639088 -0.0140538 -0.0528146" mass="0.0529811" fullinertia="0.000104924 0.000111831 2.23157e-05 -8.25837e-08 -3.08894e-07 -2.62267e-05"/>
+        <joint name="gear_rear" class="gear" range="0.0 105.0"/>
+        <geom class="visual" mesh="gear_rear__0p12_0p12_0p12" rgba="0.12 0.12 0.12 1"/>
+        <geom class="visual" mesh="gear_rear__0p25_0p25_0p25" rgba="0.25 0.25 0.25 1"/>
+        <geom class="visual" mesh="gear_rear__0p75_0p75_0p75" rgba="0.75 0.75 0.75 1"/>
+        <geom class="collision" mesh="gear_rear__hull00"/>
+        <geom class="collision" mesh="gear_rear__hull01"/>
+        <geom class="collision" mesh="gear_rear__hull02"/>
+      </body>
+    </body>
+  </worldbody>
+  <equality>
+    <connect name="loop_xp" body1="linkYm_xp" body2="shin_xp" anchor="0.002 0.24787 -0.2471" solref="0.004 1" solimp="0.95 0.99 0.001"/>
+    <connect name="loop_xm" body1="linkYm_xm" body2="shin_xm" anchor="-0.002 0.24787 -0.2471" solref="0.004 1" solimp="0.95 0.99 0.001"/>
+  </equality>
+  <actuator>
+    <motor name="hip_Yp_xp" joint="hip_Yp_xp" gear="9.0" ctrlrange="-2.0 2.0"/>
+    <motor name="hip_Ym_xp" joint="hip_Ym_xp" gear="9.0" ctrlrange="-2.0 2.0"/>
+    <motor name="hip_Yp_xm" joint="hip_Yp_xm" gear="9.0" ctrlrange="-2.0 2.0"/>
+    <motor name="hip_Ym_xm" joint="hip_Ym_xm" gear="9.0" ctrlrange="-2.0 2.0"/>
+    <motor name="wheel_xp" joint="wheel_xp" gear="9.0" ctrlrange="-2.0 2.0"/>
+    <motor name="wheel_xm" joint="wheel_xm" gear="9.0" ctrlrange="-2.0 2.0"/>
+    <position name="servo_gear_front" joint="gear_front" kp="3.0" ctrlrange="-1.8326 0.0000" forcerange="-0.25 0.25"/>
+    <position name="servo_gear_rear" joint="gear_rear" kp="3.0" ctrlrange="0.0000 1.8326" forcerange="-0.25 0.25"/>
+  </actuator>
+  <sensor>
+    <framequat name="imu_quat" objtype="site" objname="imu"/>
+    <gyro name="imu_gyro" site="imu"/>
+    <accelerometer name="imu_acc" site="imu"/>
+    <jointpos name="hip_Yp_xp_pos" joint="hip_Yp_xp"/>
+    <jointpos name="hip_Ym_xp_pos" joint="hip_Ym_xp"/>
+    <jointpos name="hip_Yp_xm_pos" joint="hip_Yp_xm"/>
+    <jointpos name="hip_Ym_xm_pos" joint="hip_Ym_xm"/>
+    <jointpos name="wheel_xp_pos" joint="wheel_xp"/>
+    <jointpos name="wheel_xm_pos" joint="wheel_xm"/>
+    <jointpos name="gear_front_pos" joint="gear_front"/>
+    <jointpos name="gear_rear_pos" joint="gear_rear"/>
+    <jointvel name="hip_Yp_xp_vel" joint="hip_Yp_xp"/>
+    <jointvel name="hip_Ym_xp_vel" joint="hip_Ym_xp"/>
+    <jointvel name="hip_Yp_xm_vel" joint="hip_Yp_xm"/>
+    <jointvel name="hip_Ym_xm_vel" joint="hip_Ym_xm"/>
+    <jointvel name="wheel_xp_vel" joint="wheel_xp"/>
+    <jointvel name="wheel_xm_vel" joint="wheel_xm"/>
+    <jointvel name="gear_front_vel" joint="gear_front"/>
+    <jointvel name="gear_rear_vel" joint="gear_rear"/>
+  </sensor>
+</mujoco>

@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1220 760" role="img" aria-labelledby="title desc">
+  <title id="title">Robot controller architecture</title>
+  <desc id="desc">Organized controller diagram showing command targets, state estimation, LQR and PID control, virtual model control, actuator torques, the MuJoCo plant, and the single feedback path.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#263238"/>
+    </marker>
+    <style>
+      .title { font: 24px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-weight: 700; fill: #1f2933; }
+      .label { font: 17px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-weight: 700; fill: #1f2933; }
+      .body { font: 14px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #40515f; }
+      .small { font: 12px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #40515f; }
+      .box { fill: #ffffff; stroke: #37474f; stroke-width: 2.4; rx: 8; }
+      .target { fill: #f3f6f8; stroke: #546e7a; stroke-width: 2.4; rx: 8; }
+      .math { fill: #eef5ff; stroke: #2f80ed; stroke-width: 2.4; rx: 8; }
+      .pid { fill: #fff8e1; stroke: #f59e0b; stroke-width: 2.4; rx: 8; }
+      .vmc { fill: #fbe9e7; stroke: #d84315; stroke-width: 2.4; rx: 8; }
+      .plant { fill: #edf7ed; stroke: #2e7d32; stroke-width: 2.4; rx: 8; }
+      .arrow { stroke: #263238; stroke-width: 2.4; fill: none; marker-end: url(#arrow); }
+      .state { stroke: #607d8b; stroke-width: 2.2; fill: none; stroke-dasharray: 7 7; marker-end: url(#arrow); }
+      .lane { stroke: #b0bec5; stroke-width: 1.4; fill: none; }
+    </style>
+  </defs>
+
+  <rect width="1220" height="760" fill="#f7fafc"/>
+  <text x="610" y="44" class="title" text-anchor="middle">Controller data flow at each 2 ms MuJoCo step</text>
+
+  <text x="96" y="84" class="small">operator input</text>
+  <rect x="60" y="104" width="260" height="126" class="box"/>
+  <text x="190" y="134" class="label" text-anchor="middle">RobotCommand</text>
+  <text x="82" y="164" class="body">speed_cmd</text>
+  <text x="82" y="184" class="body">yaw_speed_cmd</text>
+  <text x="82" y="204" class="body">leg_length</text>
+  <text x="202" y="204" class="body">brake flag</text>
+
+  <text x="408" y="84" class="small">reachable references</text>
+  <rect x="370" y="104" width="270" height="126" class="target"/>
+  <text x="505" y="134" class="label" text-anchor="middle">Target generator</text>
+  <text x="392" y="164" class="body">ramps speed target</text>
+  <text x="392" y="184" class="body">integrates position target</text>
+  <text x="392" y="204" class="body">clamps speed, position, yaw lead</text>
+
+  <text x="734" y="84" class="small">sagittal balance</text>
+  <rect x="690" y="104" width="250" height="150" class="math"/>
+  <text x="815" y="134" class="label" text-anchor="middle">LQR</text>
+  <text x="712" y="164" class="body">state: theta, dtheta, x, dx</text>
+  <text x="712" y="184" class="body">plus pitch phi, dphi</text>
+  <text x="712" y="204" class="body">K(L0) cubic gain schedule</text>
+  <text x="712" y="224" class="body">outputs T and Tp</text>
+
+  <text x="734" y="294" class="small">auxiliary objectives</text>
+  <rect x="690" y="314" width="250" height="170" class="pid"/>
+  <text x="815" y="344" class="label" text-anchor="middle">Cascade PIDs</text>
+  <text x="712" y="374" class="body">yaw rate loop</text>
+  <text x="712" y="394" class="body">roll leveler</text>
+  <text x="712" y="414" class="body">leg length and suspension</text>
+  <text x="712" y="434" class="body">left/right leg angle symmetry</text>
+  <text x="712" y="454" class="body">ground-contact gating</text>
+
+  <text x="1000" y="164" class="small">torque composition</text>
+  <rect x="970" y="184" width="220" height="160" class="vmc"/>
+  <text x="1080" y="214" class="label" text-anchor="middle">Mixer + VMC</text>
+  <text x="992" y="244" class="body">wheel balance + yaw</text>
+  <text x="992" y="264" class="body">leg forces + roll</text>
+  <text x="992" y="284" class="body">constraint-projected Jacobian</text>
+  <text x="992" y="304" class="body">maps endpoint forces to hips</text>
+
+  <rect x="970" y="420" width="220" height="116" class="box"/>
+  <text x="1080" y="450" class="label" text-anchor="middle">Actuators</text>
+  <text x="992" y="480" class="body">4 hip torque motors</text>
+  <text x="992" y="500" class="body">2 wheel torque motors</text>
+  <text x="992" y="520" class="body">runtime saturation</text>
+
+  <rect x="412" y="608" width="352" height="106" class="plant"/>
+  <text x="588" y="638" class="label" text-anchor="middle">MuJoCo plant</text>
+  <text x="434" y="668" class="body">MJCF robot, closed-loop constraints, contacts</text>
+  <text x="434" y="688" class="body">height-field or flat ground, implicitfast integration</text>
+
+  <text x="94" y="294" class="small">measured state</text>
+  <rect x="60" y="314" width="280" height="170" class="target"/>
+  <text x="200" y="344" class="label" text-anchor="middle">State estimator</text>
+  <text x="82" y="374" class="body">Euler attitude from base quaternion</text>
+  <text x="82" y="394" class="body">leg length and angle from sites</text>
+  <text x="82" y="414" class="body">wheel encoder odometry</text>
+  <text x="82" y="434" class="body">tire contact hysteresis</text>
+  <text x="82" y="454" class="body">compact state for feedback</text>
+
+  <path d="M 320 167 L 370 167" class="arrow"/>
+  <path d="M 640 167 L 690 167" class="arrow"/>
+  <path d="M 940 184 L 970 245" class="arrow"/>
+  <path d="M 940 399 L 970 286" class="arrow"/>
+  <path d="M 1080 344 L 1080 420" class="arrow"/>
+  <path d="M 970 478 C 880 530 760 584 705 608" class="arrow"/>
+
+  <path d="M 340 398 L 662 398" class="state"/>
+  <text x="430" y="386" class="small">measured-state bus</text>
+  <path d="M 662 398 L 690 398" class="state"/>
+  <path d="M 662 398 L 662 180 L 690 180" class="state"/>
+  <path d="M 505 230 L 505 276 L 662 276 L 662 332 L 690 332" class="arrow"/>
+  <path d="M 505 230 L 505 258 L 662 258 L 662 148 L 690 148" class="arrow"/>
+
+  <path d="M 412 662 L 200 662 L 200 484" class="state"/>
+</svg>

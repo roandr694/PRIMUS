@@ -1,0 +1,22 @@
+<mujoco model="robo_bipedal_plano">
+  <!-- GERADO por scripts/generate_mjcf.py. Chao plano, sem obstaculos (para medir o controle). -->
+  <include file="robo_bipedal.xml"/>
+  <visual>
+    <global azimuth="135" elevation="-20" offwidth="1920" offheight="1080"/>
+    <headlight ambient="0.4 0.4 0.45" diffuse="0.5 0.5 0.5" specular="0.1 0.1 0.1"/>
+    <quality shadowsize="4096"/>
+  </visual>
+  <statistic center="0 0 0.3" extent="1.2"/>
+  <asset>
+    <texture name="sky" type="skybox" builtin="gradient" rgb1="0.45 0.62 0.82" rgb2="0.86 0.90 0.95" width="256" height="256"/>
+    <texture name="ground_grid" type="2d" builtin="checker" width="512" height="512" rgb1="0.16 0.20 0.24" rgb2="0.22 0.27 0.32"/>
+    <material name="ground" texture="ground_grid" texrepeat="24 24" reflectance="0.15"/>
+  </asset>
+  <worldbody>
+    <light name="key" pos="3 -4 6" dir="-0.3 0.5 -1" directional="true" diffuse="0.7 0.7 0.68" specular="0.2 0.2 0.2" castshadow="true"/>
+    <geom name="ground" type="plane" size="0 0 0.05" material="ground" contype="1" conaffinity="1" friction="1.2 0.02 0.002"/>
+  </worldbody>
+  <keyframe>
+    <key name="home" qpos="0 0 0.5037 0.70710678 0 0 -0.70710678 0 0 0 0 0 0 0 0 0 0 0 0"/>
+  </keyframe>
+</mujoco>

@@ -1,0 +1,226 @@
+<?xml version="1.0"?>
+<!-- Robo bipedal com rodas - gerado da montagem principal do Fusion. X lateral, Y frente, Z cima. SI.
+     ATENCAO: cada perna e um 5 barras FECHADO. O URDF e uma arvore; o fechamento (linkYm_* <-> shin_* no eixo da roda)
+     esta em loop_closures.json e e criado no USD por isaac/add_loop_closures.py. -->
+<robot name="robo_bipedal">
+  <material name="c_00_62_00"><color rgba="0 0.62 0 1"/></material>
+  <material name="c_12_12_12"><color rgba="0.12 0.12 0.12 1"/></material>
+  <material name="c_25_00_00"><color rgba="0.25 0 0 1"/></material>
+  <material name="c_25_25_25"><color rgba="0.25 0.25 0.25 1"/></material>
+  <material name="c_25_25_62"><color rgba="0.25 0.25 0.62 1"/></material>
+  <material name="c_25_50_38"><color rgba="0.25 0.5 0.38 1"/></material>
+  <material name="c_38_38_38"><color rgba="0.38 0.38 0.38 1"/></material>
+  <material name="c_50_50_50"><color rgba="0.5 0.5 0.5 1"/></material>
+  <material name="c_62_62_62"><color rgba="0.62 0.62 0.62 1"/></material>
+  <material name="c_75_75_75"><color rgba="0.75 0.75 0.75 1"/></material>
+  <material name="c_75_88_88"><color rgba="0.75 0.88 0.88 1"/></material>
+  <material name="c_88_00_00"><color rgba="0.88 0 0 1"/></material>
+  <material name="c_88_50_00"><color rgba="0.88 0.5 0 1"/></material>
+  <material name="c_88_75_75"><color rgba="0.88 0.75 0.75 1"/></material>
+  <material name="c_88_88_88"><color rgba="0.88 0.88 0.88 1"/></material>
+  <material name="c_100_00_00"><color rgba="1 0 0 1"/></material>
+  <material name="c_100_75_50"><color rgba="1 0.75 0.5 1"/></material>
+  <material name="c_100_100_88"><color rgba="1 1 0.88 1"/></material>
+  <material name="c_100_100_100"><color rgba="1 1 1 1"/></material>
+  <material name="c_75_62_25"><color rgba="0.75 0.62 0.25 1"/></material>
+  <link name="base">
+    <inertial><origin xyz="-0.0119725 0.00916149 -0.0188345" rpy="0 0 0"/><mass value="7.63193"/><inertia ixx="0.074045" iyy="0.114747" izz="0.145606" ixy="0.000221429" ixz="0.000222548" iyz="7.87315e-05"/></inertial>
+    <visual><geometry><mesh filename="../../models/meshes/visual/base__0p00_0p62_0p00.stl"/></geometry><material name="c_00_62_00"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/base__0p12_0p12_0p12.stl"/></geometry><material name="c_12_12_12"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/base__0p25_0p00_0p00.stl"/></geometry><material name="c_25_00_00"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/base__0p25_0p25_0p25.stl"/></geometry><material name="c_25_25_25"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/base__0p25_0p25_0p62.stl"/></geometry><material name="c_25_25_62"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/base__0p25_0p50_0p38.stl"/></geometry><material name="c_25_50_38"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/base__0p38_0p38_0p38.stl"/></geometry><material name="c_38_38_38"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/base__0p50_0p50_0p50.stl"/></geometry><material name="c_50_50_50"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/base__0p62_0p62_0p62.stl"/></geometry><material name="c_62_62_62"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/base__0p75_0p75_0p75.stl"/></geometry><material name="c_75_75_75"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/base__0p75_0p88_0p88.stl"/></geometry><material name="c_75_88_88"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/base__0p88_0p00_0p00.stl"/></geometry><material name="c_88_00_00"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/base__0p88_0p50_0p00.stl"/></geometry><material name="c_88_50_00"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/base__0p88_0p75_0p75.stl"/></geometry><material name="c_88_75_75"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/base__0p88_0p88_0p88.stl"/></geometry><material name="c_88_88_88"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/base__1p00_0p00_0p00.stl"/></geometry><material name="c_100_00_00"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/base__1p00_0p75_0p50.stl"/></geometry><material name="c_100_75_50"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/base__1p00_1p00_0p88.stl"/></geometry><material name="c_100_100_88"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/base__1p00_1p00_1p00.stl"/></geometry><material name="c_100_100_100"/></visual>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull00.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull01.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull02.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull03.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull04.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull05.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull06.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull07.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull08.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull09.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull10.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull11.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull12.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull13.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull14.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull15.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull16.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull17.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull18.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull19.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull20.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull21.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull22.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/base__hull23.stl"/></geometry></collision>
+  </link>
+  <link name="armYp_xp">
+    <inertial><origin xyz="0.000513046 0.0804023 -0.0584828" rpy="0 0 0"/><mass value="0.330402"/><inertia ixx="0.0020984" iyy="0.000794366" izz="0.00139636" ixy="-5.2071e-05" ixz="3.68994e-05" iyz="0.000876394"/></inertial>
+    <visual><geometry><mesh filename="../../models/meshes/visual/armYp_xp__0p25_0p25_0p25.stl"/></geometry><material name="c_25_25_25"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/armYp_xp__0p62_0p62_0p62.stl"/></geometry><material name="c_62_62_62"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/armYp_xp__1p00_0p75_0p50.stl"/></geometry><material name="c_100_75_50"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/armYp_xp__1p00_1p00_1p00.stl"/></geometry><material name="c_100_100_100"/></visual>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYp_xp__hull00.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYp_xp__hull01.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYp_xp__hull02.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYp_xp__hull03.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYp_xp__hull04.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYp_xp__hull05.stl"/></geometry></collision>
+  </link>
+  <link name="shin_xp">
+    <inertial><origin xyz="0.0225036 -0.173777 -0.196084" rpy="0 0 0"/><mass value="1.35266"/><inertia ixx="0.0217693" iyy="0.0129589" izz="0.0104943" ixy="0.000682066" ixz="0.000769461" iyz="-0.010127"/></inertial>
+    <visual><geometry><mesh filename="../../models/meshes/visual/shin_xp__0p12_0p12_0p12.stl"/></geometry><material name="c_12_12_12"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/shin_xp__0p25_0p25_0p25.stl"/></geometry><material name="c_25_25_25"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/shin_xp__0p62_0p62_0p62.stl"/></geometry><material name="c_62_62_62"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/shin_xp__0p75_0p62_0p25.stl"/></geometry><material name="c_75_62_25"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/shin_xp__0p75_0p75_0p75.stl"/></geometry><material name="c_75_75_75"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/shin_xp__1p00_0p75_0p50.stl"/></geometry><material name="c_100_75_50"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/shin_xp__1p00_1p00_1p00.stl"/></geometry><material name="c_100_100_100"/></visual>
+    <collision><geometry><mesh filename="../../models/meshes/collision/shin_xp__hull00.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/shin_xp__hull01.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/shin_xp__hull02.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/shin_xp__hull03.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/shin_xp__hull04.stl"/></geometry></collision>
+  </link>
+  <link name="wheel_xp">
+    <inertial><origin xyz="-0.0288597 5.29484e-06 -4.1767e-06" rpy="0 0 0"/><mass value="1.30915"/><inertia ixx="0.00805434" iyy="0.00425595" izz="0.00425594" ixy="-6.13149e-10" ixz="1.27406e-09" iyz="-4.28711e-09"/></inertial>
+    <visual><geometry><mesh filename="../../models/meshes/visual/wheel_xp__0p12_0p12_0p12.stl"/></geometry><material name="c_12_12_12"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/wheel_xp__0p25_0p25_0p25.stl"/></geometry><material name="c_25_25_25"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/wheel_xp__0p62_0p62_0p62.stl"/></geometry><material name="c_62_62_62"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/wheel_xp__1p00_0p75_0p50.stl"/></geometry><material name="c_100_75_50"/></visual>
+    <collision name="wheel_xp_tire"><origin xyz="-0.02925 0 0" rpy="0 1.5707963 0"/><geometry><cylinder radius="0.10751" length="0.05350"/></geometry></collision>
+  </link>
+  <link name="armYm_xp">
+    <inertial><origin xyz="0.000507746 -0.0749994 -0.0652675" rpy="0 0 0"/><mass value="0.330403"/><inertia ixx="0.00209842" iyy="0.000951121" izz="0.00123962" ixy="4.86775e-05" ixz="4.13161e-05" iyz="-0.000915353"/></inertial>
+    <visual><geometry><mesh filename="../../models/meshes/visual/armYm_xp__0p25_0p25_0p25.stl"/></geometry><material name="c_25_25_25"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/armYm_xp__0p62_0p62_0p62.stl"/></geometry><material name="c_62_62_62"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/armYm_xp__1p00_0p75_0p50.stl"/></geometry><material name="c_100_75_50"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/armYm_xp__1p00_1p00_1p00.stl"/></geometry><material name="c_100_100_100"/></visual>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYm_xp__hull00.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYm_xp__hull01.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYm_xp__hull02.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYm_xp__hull03.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYm_xp__hull04.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYm_xp__hull05.stl"/></geometry></collision>
+  </link>
+  <link name="linkYm_xp">
+    <inertial><origin xyz="0.0139898 0.111838 -0.11149" rpy="0 0 0"/><mass value="0.645251"/><inertia ixx="0.00809801" iyy="0.00407877" izz="0.00410329" ixy="1.12678e-06" ixz="-1.11816e-06" iyz="0.00398094"/></inertial>
+    <visual><geometry><mesh filename="../../models/meshes/visual/linkYm_xp__0p25_0p25_0p25.stl"/></geometry><material name="c_25_25_25"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/linkYm_xp__0p62_0p62_0p62.stl"/></geometry><material name="c_62_62_62"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/linkYm_xp__0p75_0p75_0p75.stl"/></geometry><material name="c_75_75_75"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/linkYm_xp__1p00_0p75_0p50.stl"/></geometry><material name="c_100_75_50"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/linkYm_xp__1p00_1p00_1p00.stl"/></geometry><material name="c_100_100_100"/></visual>
+    <collision><geometry><mesh filename="../../models/meshes/collision/linkYm_xp__hull00.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/linkYm_xp__hull01.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/linkYm_xp__hull02.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/linkYm_xp__hull03.stl"/></geometry></collision>
+  </link>
+  <link name="armYp_xm">
+    <inertial><origin xyz="-0.000513052 0.0804022 -0.0584827" rpy="0 0 0"/><mass value="0.330403"/><inertia ixx="0.0020984" iyy="0.000794367" izz="0.00139636" ixy="5.20712e-05" ixz="-3.68995e-05" iyz="0.000876395"/></inertial>
+    <visual><geometry><mesh filename="../../models/meshes/visual/armYp_xm__0p25_0p25_0p25.stl"/></geometry><material name="c_25_25_25"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/armYp_xm__0p62_0p62_0p62.stl"/></geometry><material name="c_62_62_62"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/armYp_xm__1p00_0p75_0p50.stl"/></geometry><material name="c_100_75_50"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/armYp_xm__1p00_1p00_1p00.stl"/></geometry><material name="c_100_100_100"/></visual>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYp_xm__hull00.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYp_xm__hull01.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYp_xm__hull02.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYp_xm__hull03.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYp_xm__hull04.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYp_xm__hull05.stl"/></geometry></collision>
+  </link>
+  <link name="shin_xm">
+    <inertial><origin xyz="-0.0224977 -0.173761 -0.196098" rpy="0 0 0"/><mass value="1.35266"/><inertia ixx="0.0217693" iyy="0.0129482" izz="0.010505" ixy="-0.000681844" ixz="-0.000769657" iyz="-0.0101283"/></inertial>
+    <visual><geometry><mesh filename="../../models/meshes/visual/shin_xm__0p12_0p12_0p12.stl"/></geometry><material name="c_12_12_12"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/shin_xm__0p25_0p25_0p25.stl"/></geometry><material name="c_25_25_25"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/shin_xm__0p62_0p62_0p62.stl"/></geometry><material name="c_62_62_62"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/shin_xm__0p75_0p62_0p25.stl"/></geometry><material name="c_75_62_25"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/shin_xm__0p75_0p75_0p75.stl"/></geometry><material name="c_75_75_75"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/shin_xm__1p00_0p75_0p50.stl"/></geometry><material name="c_100_75_50"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/shin_xm__1p00_1p00_1p00.stl"/></geometry><material name="c_100_100_100"/></visual>
+    <collision><geometry><mesh filename="../../models/meshes/collision/shin_xm__hull00.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/shin_xm__hull01.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/shin_xm__hull02.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/shin_xm__hull03.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/shin_xm__hull04.stl"/></geometry></collision>
+  </link>
+  <link name="wheel_xm">
+    <inertial><origin xyz="0.0288656 3.87016e-06 -3.0129e-06" rpy="0 0 0"/><mass value="1.30915"/><inertia ixx="0.00805434" iyy="0.00425595" izz="0.00425594" ixy="-5.70397e-10" ixz="-1.29376e-09" iyz="4.78609e-09"/></inertial>
+    <visual><geometry><mesh filename="../../models/meshes/visual/wheel_xm__0p12_0p12_0p12.stl"/></geometry><material name="c_12_12_12"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/wheel_xm__0p25_0p25_0p25.stl"/></geometry><material name="c_25_25_25"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/wheel_xm__0p62_0p62_0p62.stl"/></geometry><material name="c_62_62_62"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/wheel_xm__1p00_0p75_0p50.stl"/></geometry><material name="c_100_75_50"/></visual>
+    <collision name="wheel_xm_tire"><origin xyz="0.02925 0 0" rpy="0 1.5707963 0"/><geometry><cylinder radius="0.10750" length="0.05350"/></geometry></collision>
+  </link>
+  <link name="armYm_xm">
+    <inertial><origin xyz="-0.000507748 -0.0749996 -0.0652676" rpy="0 0 0"/><mass value="0.330402"/><inertia ixx="0.00209841" iyy="0.000951121" izz="0.00123962" ixy="-4.86776e-05" ixz="-4.13162e-05" iyz="-0.000915352"/></inertial>
+    <visual><geometry><mesh filename="../../models/meshes/visual/armYm_xm__0p25_0p25_0p25.stl"/></geometry><material name="c_25_25_25"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/armYm_xm__0p62_0p62_0p62.stl"/></geometry><material name="c_62_62_62"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/armYm_xm__1p00_0p75_0p50.stl"/></geometry><material name="c_100_75_50"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/armYm_xm__1p00_1p00_1p00.stl"/></geometry><material name="c_100_100_100"/></visual>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYm_xm__hull00.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYm_xm__hull01.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYm_xm__hull02.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYm_xm__hull03.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYm_xm__hull04.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/armYm_xm__hull05.stl"/></geometry></collision>
+  </link>
+  <link name="linkYm_xm">
+    <inertial><origin xyz="-0.0139839 0.111838 -0.111489" rpy="0 0 0"/><mass value="0.645251"/><inertia ixx="0.00809801" iyy="0.00407854" izz="0.00410352" ixy="-1.12166e-06" ixz="1.1233e-06" iyz="0.00398094"/></inertial>
+    <visual><geometry><mesh filename="../../models/meshes/visual/linkYm_xm__0p25_0p25_0p25.stl"/></geometry><material name="c_25_25_25"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/linkYm_xm__0p62_0p62_0p62.stl"/></geometry><material name="c_62_62_62"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/linkYm_xm__0p75_0p75_0p75.stl"/></geometry><material name="c_75_75_75"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/linkYm_xm__1p00_0p75_0p50.stl"/></geometry><material name="c_100_75_50"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/linkYm_xm__1p00_1p00_1p00.stl"/></geometry><material name="c_100_100_100"/></visual>
+    <collision><geometry><mesh filename="../../models/meshes/collision/linkYm_xm__hull00.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/linkYm_xm__hull01.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/linkYm_xm__hull02.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/linkYm_xm__hull03.stl"/></geometry></collision>
+  </link>
+  <link name="gear_front">
+    <inertial><origin xyz="-0.000433961 0.012489 -0.0467737" rpy="0 0 0"/><mass value="0.0597491"/><inertia ixx="0.000123155" iyy="0.00018986" izz="8.4319e-05" ixy="1.40647e-06" ixz="-4.8392e-06" iyz="3.06393e-05"/></inertial>
+    <visual><geometry><mesh filename="../../models/meshes/visual/gear_front__0p12_0p12_0p12.stl"/></geometry><material name="c_12_12_12"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/gear_front__0p25_0p25_0p25.stl"/></geometry><material name="c_25_25_25"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/gear_front__0p75_0p75_0p75.stl"/></geometry><material name="c_75_75_75"/></visual>
+    <collision><geometry><mesh filename="../../models/meshes/collision/gear_front__hull00.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/gear_front__hull01.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/gear_front__hull02.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/gear_front__hull03.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/gear_front__hull04.stl"/></geometry></collision>
+  </link>
+  <link name="gear_rear">
+    <inertial><origin xyz="-0.000639088 -0.0140538 -0.0528146" rpy="0 0 0"/><mass value="0.0529811"/><inertia ixx="0.000104924" iyy="0.000111831" izz="2.23157e-05" ixy="-8.25837e-08" ixz="-3.08894e-07" iyz="-2.62267e-05"/></inertial>
+    <visual><geometry><mesh filename="../../models/meshes/visual/gear_rear__0p12_0p12_0p12.stl"/></geometry><material name="c_12_12_12"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/gear_rear__0p25_0p25_0p25.stl"/></geometry><material name="c_25_25_25"/></visual>
+    <visual><geometry><mesh filename="../../models/meshes/visual/gear_rear__0p75_0p75_0p75.stl"/></geometry><material name="c_75_75_75"/></visual>
+    <collision><geometry><mesh filename="../../models/meshes/collision/gear_rear__hull00.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/gear_rear__hull01.stl"/></geometry></collision>
+    <collision><geometry><mesh filename="../../models/meshes/collision/gear_rear__hull02.stl"/></geometry></collision>
+  </link>
+  <joint name="hip_Yp_xp" type="revolute"><parent link="base"/><child link="armYp_xp"/><origin xyz="0.12835 0.09 -0.00035" rpy="0 0 0"/><axis xyz="1 0 0"/><limit lower="-3.1416" upper="3.1416" effort="18.0" velocity="30.0"/><dynamics damping="0.05" friction="0"/></joint>
+  <joint name="knee_Yp_xp" type="continuous"><parent link="armYp_xp"/><child link="shin_xp"/><origin xyz="-0.013 0.17608 -0.13189" rpy="0 0 0"/><axis xyz="1 0 0"/><dynamics damping="0.01"/></joint>
+  <joint name="wheel_xp" type="continuous"><parent link="shin_xp"/><child link="wheel_xp"/><origin xyz="0.088 -0.23213 -0.26194" rpy="0 0 0"/><axis xyz="1 0 0"/><limit effort="18.0" velocity="60.0"/><dynamics damping="0.01"/></joint>
+  <joint name="hip_Ym_xp" type="revolute"><parent link="base"/><child link="armYm_xp"/><origin xyz="0.21435 -0.05 -0.00035" rpy="0 0 0"/><axis xyz="1 0 0"/><limit lower="-3.1416" upper="3.1416" effort="18.0" velocity="30.0"/><dynamics damping="0.05" friction="0"/></joint>
+  <joint name="knee_Ym_xp" type="continuous"><parent link="armYm_xp"/><child link="linkYm_xp"/><origin xyz="-0.013 -0.16392 -0.14673" rpy="0 0 0"/><axis xyz="1 0 0"/><dynamics damping="0.01"/></joint>
+  <joint name="hip_Yp_xm" type="revolute"><parent link="base"/><child link="armYp_xm"/><origin xyz="-0.15165 0.09 -0.00035" rpy="0 0 0"/><axis xyz="1 0 0"/><limit lower="-3.1416" upper="3.1416" effort="18.0" velocity="30.0"/><dynamics damping="0.05" friction="0"/></joint>
+  <joint name="knee_Yp_xm" type="continuous"><parent link="armYp_xm"/><child link="shin_xm"/><origin xyz="0.013 0.17608 -0.13189" rpy="0 0 0"/><axis xyz="1 0 0"/><dynamics damping="0.01"/></joint>
+  <joint name="wheel_xm" type="continuous"><parent link="shin_xm"/><child link="wheel_xm"/><origin xyz="-0.088 -0.23213 -0.26194" rpy="0 0 0"/><axis xyz="1 0 0"/><limit effort="18.0" velocity="60.0"/><dynamics damping="0.01"/></joint>
+  <joint name="hip_Ym_xm" type="revolute"><parent link="base"/><child link="armYm_xm"/><origin xyz="-0.23765 -0.05 -0.00035" rpy="0 0 0"/><axis xyz="1 0 0"/><limit lower="-3.1416" upper="3.1416" effort="18.0" velocity="30.0"/><dynamics damping="0.05" friction="0"/></joint>
+  <joint name="knee_Ym_xm" type="continuous"><parent link="armYm_xm"/><child link="linkYm_xm"/><origin xyz="0.013 -0.16392 -0.14673" rpy="0 0 0"/><axis xyz="1 0 0"/><dynamics damping="0.01"/></joint>
+  <joint name="gear_front" type="revolute"><parent link="base"/><child link="gear_front"/><origin xyz="-0.00965 0.08 -0.154" rpy="0 0 0"/><axis xyz="1 0 0"/><limit lower="-1.8326" upper="0.0000" effort="0.25" velocity="10"/><dynamics damping="0.02"/></joint>
+  <joint name="gear_rear" type="revolute"><parent link="base"/><child link="gear_rear"/><origin xyz="-0.0109 -0.064 -0.154" rpy="0 0 0"/><axis xyz="1 0 0"/><limit lower="0.0000" upper="1.8326" effort="0.25" velocity="10"/><dynamics damping="0.02"/></joint>
+</robot>
