@@ -6,16 +6,17 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'tools'))
 from robot_def import LEGS, GEAR, link_origin
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+sys.path.insert(0, os.path.join(ROOT, 'isaac'))
+from actuator_parameters import GEAR_RATIO, JOINT_TORQUE_LIMIT, JOINT_NO_LOAD_SPEED
 CAD = os.path.join(ROOT, 'models', 'cad')
 OUT = os.path.join(ROOT, 'isaac', 'urdf')
 MESH = '../../models/meshes'   # relativo ao URDF
 I = json.load(open(f'{CAD}/mass_properties.json'))['inertial']
 V = json.load(open(f'{CAD}/visual_meshes.json'))
 C = json.load(open(f'{CAD}/collision.json'))
-GEAR_RATIO = 9.0
-HIP_EFFORT = 2.0 * GEAR_RATIO      # N.m na junta - PLACEHOLDER (torque de pico do motor x reducao)
-WHEEL_EFFORT = 2.0 * GEAR_RATIO    # PLACEHOLDER
-VEL = 30.0                         # rad/s - PLACEHOLDER
+HIP_EFFORT = JOINT_TORQUE_LIMIT   # Unmeasured hypothesis, joint-side N.m
+WHEEL_EFFORT = JOINT_TORQUE_LIMIT
+VEL = JOINT_NO_LOAD_SPEED        # Ideal 24 V / 130 kV / 9:1 reference [rad/s]
 def f(v): return ' '.join('%.6g' % x for x in v)
 def rel(c, p): return (np.array(link_origin(c)) - np.array(link_origin(p))) / 1000.0
 mats = {}
@@ -46,7 +47,7 @@ for s in LEGS:
     hip_lim = f'<limit lower="-3.1416" upper="3.1416" effort="{HIP_EFFORT}" velocity="{VEL}"/><dynamics damping="0.05" friction="0"/>'
     joints.append(joint(f'hip_Yp_{s}', 'revolute', 'base', f'armYp_{s}', hip_lim))
     joints.append(joint(f'knee_Yp_{s}', 'continuous', f'armYp_{s}', f'shin_{s}', '<dynamics damping="0.01"/>'))
-    joints.append(joint(f'wheel_{s}', 'continuous', f'shin_{s}', f'wheel_{s}', f'<limit effort="{WHEEL_EFFORT}" velocity="{VEL * 2}"/><dynamics damping="0.01"/>'))
+    joints.append(joint(f'wheel_{s}', 'continuous', f'shin_{s}', f'wheel_{s}', f'<limit effort="{WHEEL_EFFORT}" velocity="{VEL}"/><dynamics damping="0.01"/>'))
     joints.append(joint(f'hip_Ym_{s}', 'revolute', 'base', f'armYm_{s}', hip_lim))
     joints.append(joint(f'knee_Ym_{s}', 'continuous', f'armYm_{s}', f'linkYm_{s}', '<dynamics damping="0.01"/>'))
 for g, d in GEAR.items():

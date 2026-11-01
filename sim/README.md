@@ -86,17 +86,9 @@ Com `state_source="sim"` (ou `--state sim` nos scripts) o controlador usa a velo
 
 Para sensores mais realistas, `ImuConfig` tem ruído e bias de giro e o modo `mahony`, que estima a atitude só com giro e acelerômetro. Veja `../docs/notas_modelo_controle.md`.
 
-## Isaac Sim
+## Isaac Sim / primeiro teste de RL
 
-O URDF e os scripts do Isaac estão em `isaac/` (antes ficavam no zip `robo_bipedal_sim.zip`). O URDF usa as mesmas malhas de `models/meshes`.
-
-```bash
-cd isaac
-<ISAAC_SIM>/python.sh convert_urdf_to_usd.py   # gera isaac/usd/robo_bipedal.usd e fecha os 2 laços (juntas excluídas da articulação)
-<ISAAC_SIM>/python.sh check_isaac.py           # solta o robô 3 s e imprime a folga de cada laço (~0 mm)
-```
-
-`isaac/isaaclab_robo_cfg.py` é o ponto de partida do `ArticulationCfg` do Isaac Lab. Esses scripts **não foram testados** numa instalação do Isaac Sim. Se a conversão por script falhar na sua versão: *File → Import* do `isaac/urdf/robo_bipedal.urdf` (base solta, sem juntar juntas fixas, colisão do URDF, drive "None"), salve como `isaac/usd/robo_bipedal.usd` e rode `python.sh add_loop_closures.py usd/robo_bipedal.usd ../models/cad/loop_closures.json`. Depois de mudar o CAD: `python3 scripts/generate_urdf.py`.
+O fluxo atualizado para Isaac Sim 6.1 e Isaac Lab v3.0.0-EA está em [isaac/README.md](isaac/README.md). Inclui diagnóstico do runtime compartilhado, conversão URDF → USD com fechamento dos laços, teste físico e tarefa inicial de equilíbrio com PPO. A conversão real, o teste PhysX com dois robôs e um PPO de 20 iterações foram executados em CPU. O primeiro treino de terreno em GPU também foi concluído: 3.000 atualizações com 128 ambientes, avaliação e vídeos. O desempenho em escadas e o rastreamento de comandos ainda precisam melhorar; veja [os resultados](../docs/terrain-run-2026-10-31.md).
 
 ## Regenerar
 

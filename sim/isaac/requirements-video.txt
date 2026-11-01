@@ -1,0 +1,3 @@
+# Isaac Lab v3.0.0-EA imports moviepy.editor (the MoviePy 1.x API).
+moviepy>=1.0.3,<2
+imageio-ffmpeg>=0.5

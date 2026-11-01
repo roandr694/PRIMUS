@@ -1,0 +1,14 @@
+diff --git a/source/isaaclab_physx/isaaclab_physx/assets/articulation/articulation.py b/source/isaaclab_physx/isaaclab_physx/assets/articulation/articulation.py
+index ee3d48e..e8a6f54 100644
+--- a/source/isaaclab_physx/isaaclab_physx/assets/articulation/articulation.py
++++ b/source/isaaclab_physx/isaaclab_physx/assets/articulation/articulation.py
+@@ -3999,5 +3999,7 @@ class Articulation(BaseArticulation):
+         self._sim_env_ids_views: dict[int, wp.array] = {}
+-        self._cpu_env_ids_all = wp.zeros(self.num_instances, dtype=wp.int32, device="cpu", pinned=True)
++        # Pinned host memory needs CUDA even when the simulation itself runs on CPU.
++        pin_host_memory = wp.is_cuda_available()
++        self._cpu_env_ids_all = wp.zeros(self.num_instances, dtype=wp.int32, device="cpu", pinned=pin_host_memory)
+         wp.copy(self._cpu_env_ids_all, self._ALL_INDICES)
+-        self._cpu_env_ids = wp.empty(self.num_instances, dtype=wp.int32, device="cpu", pinned=True)
++        self._cpu_env_ids = wp.empty(self.num_instances, dtype=wp.int32, device="cpu", pinned=pin_host_memory)
+         self._cpu_env_ids_views: dict[int, wp.array] = {}

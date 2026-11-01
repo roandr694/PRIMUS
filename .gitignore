@@ -1,5 +1,11 @@
 __pycache__/
 *.pyc
 .DS_Store
-isaac/usd/
+/sim/isaac/usd/
 *.usd.bak
+
+# Local simulation outputs
+sim/isaac/runs/
+sim/isaac/runtime.local.json
+logs/
+runs/

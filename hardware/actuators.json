@@ -1,0 +1,27 @@
+{
+  "reported_by_owner": {
+    "supply_voltage_v": 24.0,
+    "motor_kv_rpm_per_v": 130.0,
+    "controller": "mjbots moteus-r4",
+    "motor_reference": "Motor used by OpenQDD, with a 130 kV winding; exact model label unconfirmed",
+    "gearbox": "Owner-modified printed QDD; mechanically stronger than OpenQDD, similar unmeasured backlash"
+  },
+  "existing_project_geometry": {
+    "gear_ratio_motor_to_joint": 9.0
+  },
+  "simulation_hypotheses_not_measured": {
+    "joint_torque_limit_nm": 18.0,
+    "joint_stall_torque_nm": 18.0,
+    "reflected_rotor_inertia_kg_m2": 0.006
+  },
+  "unknown": {
+    "configured_phase_current_limit_a": null,
+    "calibrated_torque_constant_nm_per_a": null,
+    "phase_resistance_ohm": null,
+    "continuous_joint_torque_nm": null,
+    "peak_joint_torque_nm": null,
+    "gearbox_efficiency": null,
+    "backlash_rad": null,
+    "battery_mass_kg": null
+  }
+}

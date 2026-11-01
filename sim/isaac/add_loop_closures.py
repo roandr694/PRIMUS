@@ -22,7 +22,8 @@ def find_link(stage, name):
 def main(usd_path, loops_path):
     shutil.copy(usd_path, usd_path + '.bak')
     stage = Usd.Stage.Open(usd_path)
-    loops = json.load(open(loops_path))
+    with open(loops_path) as stream:
+        loops = json.load(stream)
     root = stage.GetDefaultPrim() or stage.GetPseudoRoot().GetChildren()[0]
     parent = root.GetPath().AppendChild('loop_closures')
     stage.DefinePrim(parent, 'Scope')
