@@ -37,13 +37,12 @@ def main():
     parser.add_argument("--stop-button", type=int, default=0, help="Button that zeros speed/yaw while held (soft stop, coasts down). Xbox A is usually 0.")
     parser.add_argument("--brake-button", type=int, default=1, help="Button for a HARD brake (snap speed target to 0, max decel). Xbox B is usually 1.")
     parser.add_argument("--reset-button", type=int, default=7, help="Button that resets policy targets. Xbox Start/Menu is often 7.")
-    parser.add_argument("--gear-button", type=int, default=2, help="Botao que alterna o trem de pouso. Xbox X costuma ser 2.")
+    parser.add_argument("--gear-button", type=int, default=2, help="Botao que pede pousar/levantar (o trem de pouso e automatico). Xbox X costuma ser 2.")
     parser.add_argument("--flat", action="store_true", help="Chao plano em vez da arena.")
     parser.add_argument("--no-invert-speed", action="store_true")
     parser.add_argument("--no-invert-yaw", action="store_true", help="Yaw is inverted by default (stick right turns right); pass this to undo.")
     parser.add_argument("--max-speed", type=float, default=1.5, help="Velocidade maxima comandada (m/s).")
     parser.add_argument("--max-yaw-rate", type=float, default=1.8)
-    parser.add_argument("--max-leg-adjust", type=float, default=0.09, help="Faixa de altura +-(m) em torno da perna nominal 0.27 m -> perna 0.18-0.36 m.")
     args = parser.parse_args()
 
     mujoco, pygame = _require_runtime()
@@ -64,7 +63,6 @@ def main():
             ),
             max_speed=args.max_speed,
             max_yaw_rate=args.max_yaw_rate,
-            max_leg_adjust=args.max_leg_adjust,
         )
     except RuntimeError as exc:
         print(exc)
@@ -78,7 +76,8 @@ def main():
     print(f"Opening MuJoCo viewer for {path}")
     print(f"Using controller: {gamepad.name}")
     print("Left stick Y: speed | right stick X: yaw | ride height: D-pad up/down OR triggers (latching)")
-    print("A: soft stop (coast) | B: HARD brake | X: trem de pouso | Start/Menu: reset targets + height.")
+    print("A: soft stop (coast) | B: HARD brake | X: pousar/levantar (trem automatico) | Start/Menu: reset targets + height.")
+    print("O robo nasce estacionado e levanta sozinho; altura da perna de 0.18 a 0.52 m.")
 
     with mujoco.viewer.launch_passive(model, data) as viewer:
         while viewer.is_running():

@@ -55,10 +55,10 @@ ROBOT = {
     "dt": 0.001,
     "Q": [10.0, 4.0, 40.0, 80.0, 600.0, 10.0],
     "Ruu": [4.0, 4.0],
-    # faixa de L0 (quadril virtual -> eixo da roda) em que a tabela e ajustada.
-    # 0.394 m = perna toda esticada (pose do CAD, singular); abaixo de ~0.18 m o trem de pouso
-    # abaixado encosta no chao.
-    "L0_sweep": np.arange(0.17, 0.37 + 1e-9, 0.01),
+    # faixa de L0 (quadril virtual -> eixo da roda) em que a tabela e ajustada; cobre a faixa de operacao
+    # do controlador (0.18 a 0.52 m) com folga. Geometria (malhas de colisao): a roda bate no chassi
+    # abaixo de ~0.17 m; a perna toda esticada (singular) e 0.565 m; a pose do CAD e 0.394 m.
+    "L0_sweep": np.arange(0.17, 0.54 + 1e-9, 0.01),
 }
 
 

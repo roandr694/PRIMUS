@@ -25,6 +25,7 @@ def main():
     mujoco, model, data, path = rm.load(flat=args.flat)
     controller = RepoControlPolicy(mujoco, model)
     controller.reset(data)
+    rm.stand_up(mujoco, model, data, controller)   # nasce estacionado; mede a partir do robo em pe
 
     print(f"Modelo: {path}")
     print(f"nq={model.nq} nv={model.nv} nu={model.nu}  corpos={model.nbody} juntas={model.njnt} geoms={model.ngeom}")

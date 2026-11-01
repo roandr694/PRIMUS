@@ -73,7 +73,7 @@ A estrutura é a mesma do projeto antigo. O que mudou foi o que entra nela.
 - θ é o ângulo da perna em relação à vertical. É positivo quando o quadril está à frente da roda.
 - φ é o pitch, positivo com o nariz para cima.
 - T é o torque de UMA roda e Tp o torque virtual de UMA perna.
-- K(L0) é um polinômio cúbico. Vem de `control/lqr_design.py`, um porte do `sys_calc.m`.
+- K(L0) é um polinômio cúbico. Vem de `control/lqr_design.py`, um porte do `sys_calc.m`. A tabela cobre L0 de 0,17 a 0,54 m (erro do ajuste < 0,3%); a pose de cada L0 sai da cinemática analítica do 5 barras (`control/five_bar.py`).
 - O modelo é de **meio robô**, com parâmetros tirados do MJCF **em cada L0**. A perna é posicionada de verdade com o 5 barras fechado.
 
 Pontos importantes desses parâmetros:
@@ -101,10 +101,28 @@ Os pesos são Q = [10, 4, 40, 80, 600, 10] e R = [4, 4], com dt = 1 ms.
 
 Os ganhos foram ajustados para este robô e para dt = 1 ms.
 
-**Trem de pouso.** `RobotCommand.gear_down` liga o servo: 0° é abaixado (pose do CAD), ±100° é recolhido.
+**Faixa da perna.** Medida varrendo os ângulos dos quadris com as malhas de colisão (perna simétrica):
 
-- Abaixado, a ponta fica 9 cm acima do chão em L0 = 0,27 m. Por isso **L0 mínimo = 0,18 m**.
-- Recolhido, a ponta sobe para 20 cm.
+| | L0 |
+|---|---|
+| a roda bate no chassi | abaixo de ~0,17 m |
+| **mínimo de operação** (`MIN_LEG_LENGTH`) | **0,18 m** (folga para o chassi; com o trem abaixado, as pontas encostam no chão aqui) |
+| **máximo de operação** (`MAX_LEG_LENGTH`) | **0,52 m** (ângulo entre as barras inferiores ~47°, longe da singularidade) |
+| perna toda esticada (singular) | 0,565 m |
+
+O antigo limite de 0,36 m era só a faixa em que o LQR tinha sido ajustado, não a geometria.
+
+**Trem de pouso: automático.** O usuário não abre nem fecha o trem. Ele só pede para operar ou pousar
+(`RobotCommand.park`), e o controlador passa pelos modos (`Mode`):
+
+1. `parked`: perna em 0,18 m, trem abaixado (0°) apoiado no chão, sem balanço. As rodas só são seguradas e as pernas ficam perpendiculares ao corpo.
+2. `standing_up` (pedido `park=False`): o LQR liga, a perna sobe até ≥ 0,25 m (`GEAR_SAFE_LENGTH` + 1 cm), e quando o robô está parado (pitch rate < 0,3 rad/s, |ẋ| < 0,1 m/s por 0,5 s) o trem recolhe (±100°, ~0,3 s no servo; espera 0,6 s).
+3. `operating`: trem recolhido, qualquer altura de 0,18 a 0,52 m, velocidade e giro do usuário.
+4. `landing` (pedido `park=True`): ignora velocidade e giro, para, sobe até a altura segura se estiver abaixo, abaixa o trem, desce rápido até 0,25 m e depois a 5 cm/s até 0,18 m → `parked`.
+
+O robô nasce estacionado (keyframe `parked` das cenas) e levanta sozinho. Abaixado, a ponta do trem
+fica 9 cm acima do chão em L0 = 0,27 m; recolhido, 20 cm. A condição "parado" não usa o pitch
+absoluto: o pitch de equilíbrio depende do CoM, que no robô real é incerto (com o CoM 2 cm deslocado ele chega a ~5°).
 
 ### Estado: sensores do robô real (padrão) ou simulador
 
@@ -120,7 +138,7 @@ Os ganhos foram ajustados para este robô e para dt = 1 ms.
 
 Medido (chão plano, andando e girando): erro RMS da velocidade pelos encoders ≈ 0,04 m/s (picos em freadas, quando a roda escorrega); Fn estimada vs real: viés ~1 N, RMS ~5 N. Num pulo, o estimador marca "no ar" em ~80% do tempo real no ar, sem falsos positivos com a roda no chão. O estimador começa assumindo "no chão" no `reset`, porque depende da própria força comandada.
 
-Para RL: dê ao *actor* só as observações do modo `robot` e, se quiser, as do modo `sim` ao *critic* (actor-critic assimétrico).
+Para RL: dê ao *actor* só as observações do modo `robot` e, se quiser, as do modo `sim` ao *critic* (actor-critic assimétrico). O treino residual em GPU está em [`sim/warp_rl/`](../sim/warp_rl/README.md).
 
 Ruído opcional em `ImuConfig`: `gyro_noise`, `gyro_bias`, `angle_noise`, `acc_noise`. O `--imu-noise` do `sim/scripts/analyze_balance.py` usa 0,005 rad/s, 0,002 rad/s, 0,002 rad e 0,05 m/s².
 
@@ -134,6 +152,8 @@ Ruído opcional em `ImuConfig`: `gyro_noise`, `gyro_bias`, `angle_noise`, `acc_n
 | 1 m/s + yaw ±1,5 rad/s, com troca de altura | sem queda; roll ~1,5° para fora da curva |
 | empurrão de 80 N por 0,1 s | recupera em ~1 s |
 | altura 0,20 → 0,34 m | segue |
+| altura 0,18 ↔ 0,52 m (faixa nova), parado e andando 0,5 m/s com giro 1 rad/s | segue, sem queda |
+| ciclo estacionado → levanta → opera → empurrão de 80 N → pousa | levanta e recolhe o trem em 1,9 s; pousa em 3,3 s; pitch máximo 4,7° |
 | arena: rampa de 13° (sobe, plataforma, desce), pisos, terreno | sem queda |
 | IMU Mahony com ruído e bias | sem queda; pitch pico a pico 0,5° |
 | todos os testes acima | feitos no modo `robot` (encoders + IMU + contato estimado) e no modo `sim` |

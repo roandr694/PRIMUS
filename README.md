@@ -8,13 +8,15 @@ This repository holds the whole project, from CAD to simulation to the physical 
 
 Demo (simulation, sensor-realistic state): [`docs/demo_arena.mp4`](docs/demo_arena.mp4)
 
+Control direction (model-based and RL, in Portuguese): [`docs/direcao_controle.md`](docs/direcao_controle.md).
+
 ## Repository layout
 
 | folder | contents | status |
 |---|---|---|
 | [`hardware/`](hardware/) | mechanical and electrical design: CAD exports, bill of materials, wiring, assembly notes | to be filled |
-| [`sim/`](sim/) | MuJoCo model generated from the CAD (meshes, masses, closed 5-bar legs), test scenes, analysis tools; URDF + Isaac Lab balance and mixed-terrain RL tasks with closed loops | MuJoCo working; first GPU PPO terrain run completed |
-| [`control/`](control/) | balance and motion controller shared by simulation and the real robot: LQR gain-scheduled on leg length, virtual model control (VMC) through the closed-chain Jacobian, cascaded PIDs for yaw/roll/height | working in sim |
+| [`sim/`](sim/) | MuJoCo model generated from the CAD (meshes, masses, closed 5-bar legs), test scenes, analysis tools; residual RL on GPU (MuJoCo Warp); URDF + Isaac Lab tasks with closed loops | MuJoCo + residual RL working; Isaac on hold |
+| [`control/`](control/) | balance and motion controller shared by simulation and the real robot: LQR gain-scheduled on leg length, virtual model control (VMC) through the closed-chain Jacobian, cascaded PIDs for yaw/roll/height, automatic landing gear | working in sim |
 | [`robot/`](robot/) | software for the physical robot: motor and IMU drivers, communication, state estimation, sim-to-real integration | to be filled |
 | [`docs/`](docs/) | technical notes, results, history of the earlier prototype model | |
 
@@ -26,7 +28,7 @@ Demo (simulation, sensor-realistic state): [`docs/demo_arena.mp4`](docs/demo_are
 | legs | 2 × closed 5-bar linkage, 2 actuated hips + 2 passive knees each |
 | actuators | 6 × 9:1 quasi-direct-drive (4 hip, 2 wheel) |
 | wheels | Ø 215 mm |
-| leg length | 0.18 – 0.36 m (hip to axle), nominal 0.27 m |
+| leg length | 0.18 – 0.52 m (hip to axle), nominal 0.27 m |
 | sensing | IMU (WitMotion), joint encoders, motor current |
 | extras | retractable landing gear (2 servos), lidar, Jetson Orin Nano, Raspberry Pi 5 |
 
@@ -62,8 +64,10 @@ See [`sim/README.md`](sim/README.md) for everything else: scenes, analysis tools
 - [ ] actuator characterization (peak torque, speed, rotor inertia); current values are placeholders
 - [ ] real-robot drivers and state estimation (`robot/`)
 - [ ] sim-to-real transfer of the controller
-- [x] First GPU terrain PPO policy: 3,000 updates, evaluation and training/playback videos ([results](docs/terrain-run-2026-10-31.md))
-- [ ] Reliable terrain locomotion: stair performance, command tracking and robustness still need improvement
+- [x] Leg range 0.18–0.52 m with LQR re-derived over it; automatic landing gear (park / stand up / land)
+- [x] Residual RL on top of LQR + VMC, trained on GPU in MuJoCo Warp: ~4× fewer falls and ~2× lower speed error than LQR alone on mixed terrain ([sim/warp_rl](sim/warp_rl/README.md))
+- [ ] Large steps with perception (depth camera / elevation map), back in Isaac
+- [ ] Policy on the real robot
 
 ## Workspace and terrain experiments
 

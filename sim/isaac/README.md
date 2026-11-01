@@ -1,9 +1,8 @@
 # Isaac simulation and terrain learning
 
-Current status (2026-10-31): the full GPU pipeline completed on the RTX 5070:
-3,000 PPO updates / 24,576,000 transitions with 128 environments, multi-seed
-checkpoint evaluation and native training/playback videos. Stair performance and
-command tracking remain limited. See [the run record](../../docs/terrain-run-2026-10-31.md).
+Current status (2026-10-31): the first GPU PPO terrain run (raw torques) did not learn to balance
+(it sat on the landing gear); see the [post-mortem](../../docs/terrain-run-2026-10-31.md). Current RL work
+runs in MuJoCo Warp ([warp_rl](../warp_rl/README.md)); Isaac returns later for large steps and a depth camera.
 
 PRIMUS uses Isaac Sim 6.1.0.0, Isaac Lab **v3.0.0-EA** (commit
 `ae37b028ea415c91ea2bc32609efcd759ed2b974`), Python 3.12 and RSL RL 5.4.1.

@@ -2,7 +2,7 @@ import time
 from dataclasses import dataclass
 
 import _paths  # noqa: F401  (control/ no sys.path)
-from repo_control_policy import NOMINAL_LEG_LENGTH, RobotCommand
+from repo_control_policy import MAX_LEG_LENGTH, MIN_LEG_LENGTH, NOMINAL_LEG_LENGTH, RobotCommand
 
 
 def deadzone(value, threshold):
@@ -54,7 +54,8 @@ class XboxController:
         deadzone_value=0.12,
         max_speed=2.5,
         max_yaw_rate=1.8,
-        max_leg_adjust=0.09,
+        min_leg_length=MIN_LEG_LENGTH,
+        max_leg_length=MAX_LEG_LENGTH,
         height_rate=0.12,
     ):
         self.pygame = pygame
@@ -62,17 +63,19 @@ class XboxController:
         self.deadzone = float(deadzone_value)
         self.max_speed = float(max_speed)
         self.max_yaw_rate = float(max_yaw_rate)
-        self.max_leg_adjust = float(max_leg_adjust)
-        # Triggers adjust a PERSISTENT leg-height offset: hold a trigger to ramp
+        self.min_leg_length = float(min_leg_length)
+        self.max_leg_length = float(max_leg_length)
+        # Triggers adjust a PERSISTENT leg-length target: hold a trigger to ramp
         # the ride height and release to hold it there (it latches), rather than
         # only changing height while held. height_rate is m/s of leg length at
         # full trigger.
         self.height_rate = float(height_rate)
-        self.height_offset = 0.0
+        self.leg_length = NOMINAL_LEG_LENGTH
         self._last_time = None
         self._reset_requested = False
-        self.gear_down = True
-        self._gear_prev = False
+        # X pede pousar/levantar; o trem de pouso e automatico (o controlador decide quando abre/fecha)
+        self.park = False
+        self._park_prev = False
 
         pygame.init()
         count = pygame.joystick.get_count()
@@ -99,7 +102,7 @@ class XboxController:
         speed_axis = deadzone(speed_axis, self.deadzone)
         yaw_axis = deadzone(yaw_axis, self.deadzone)
 
-        # Integrate height input into a persistent (latching) ride-height offset.
+        # Integrate height input into a persistent (latching) leg-length target.
         # Two inputs are summed so it works regardless of trigger axis mapping:
         # the triggers (RT up / LT down) and the D-pad (up/down, very reliable).
         now = time.time()
@@ -108,8 +111,8 @@ class XboxController:
         trig = self._trigger_01(mapping.right_trigger_axis) - self._trigger_01(mapping.left_trigger_axis)
         dpad = hat_y(self.joystick, mapping.hat_index)
         height_input = max(-1.0, min(1.0, trig + dpad))
-        self.height_offset += height_input * self.height_rate * dt
-        self.height_offset = max(-self.max_leg_adjust, min(self.max_leg_adjust, self.height_offset))
+        self.leg_length += height_input * self.height_rate * dt
+        self.leg_length = max(self.min_leg_length, min(self.max_leg_length, self.leg_length))
 
         if button_value(self.joystick, mapping.stop_button):
             speed_axis = 0.0
@@ -122,20 +125,20 @@ class XboxController:
         if braking:
             speed_axis = 0.0
 
-        gear_pressed = button_value(self.joystick, mapping.gear_button)
-        if gear_pressed and not self._gear_prev:
-            self.gear_down = not self.gear_down
-        self._gear_prev = gear_pressed
+        park_pressed = button_value(self.joystick, mapping.gear_button)
+        if park_pressed and not self._park_prev:
+            self.park = not self.park
+        self._park_prev = park_pressed
 
         self._reset_requested = button_value(self.joystick, mapping.reset_button)
         if self._reset_requested:
-            self.height_offset = 0.0
+            self.leg_length = NOMINAL_LEG_LENGTH
         return RobotCommand(
             speed_cmd=speed_axis * self.max_speed,
             yaw_speed_cmd=yaw_axis * self.max_yaw_rate,
-            leg_length=NOMINAL_LEG_LENGTH + self.height_offset,
+            leg_length=self.leg_length,
             brake=braking,
-            gear_down=self.gear_down,
+            park=self.park,
         )
 
     def consume_reset_requested(self):

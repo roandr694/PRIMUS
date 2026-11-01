@@ -26,6 +26,7 @@ def main():
     mujoco, model, data, _ = rm.load(flat=args.flat)
     controller = RepoControlPolicy(mujoco, model, ImuConfig(mode=args.imu), state_source=args.state)
     controller.reset(data)
+    rm.stand_up(mujoco, model, data, controller)   # nasce estacionado; mede a partir do robo em pe
     leg = args.leg if args.leg is not None else controller.target.leg_length
     steps = int(args.seconds / model.opt.timestep)
     every = max(1, int(args.interval / model.opt.timestep))

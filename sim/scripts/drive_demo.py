@@ -22,6 +22,7 @@ def main():
     mujoco, model, data, _ = rm.load(flat=args.flat)
     controller = RepoControlPolicy(mujoco, model)
     controller.reset(data)
+    rm.stand_up(mujoco, model, data, controller)   # nasce estacionado; mede a partir do robo em pe
     x0 = data.qpos[:3].copy()
     for step in range(int(args.seconds / model.opt.timestep)):
         t = step * model.opt.timestep

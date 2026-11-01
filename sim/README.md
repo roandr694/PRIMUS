@@ -16,7 +16,9 @@ models/assets/terrain_heightmap.png     relevo da arena
 ../control/repo_control_policy.py       controlador (LQR + VMC + PIDs) + IMU simulada
 ../control/lqr_design.py                recalcula os ganhos do LQR a partir do MJCF
 ../control/lqr_gains.py                 tabela de ganhos (GERADA)
-scripts/robot_model.py                  carregar modelo/keyframe, cinemática da perna, parâmetros do LQR
+scripts/robot_model.py                  carregar modelo/keyframe, cinemática da perna, parâmetros do LQR, stand_up()
+../control/five_bar.py                  cinemática analítica do 5 barras
+warp_rl/                                RL residual em GPU (MuJoCo Warp + RSL-RL)
 scripts/generate_mjcf.py                gera os 3 XML a partir de models/cad + tools/robot_def.py
 scripts/generate_urdf.py                gera isaac/urdf/robo_bipedal.urdf + models/cad/loop_closures.json
 isaac/                                  URDF + scripts do Isaac Sim / Isaac Lab (laços fechados no USD)
@@ -53,13 +55,18 @@ conda run -n bipedal mjpython scripts/run_xbox_viewer.py --flat   # chão plano
 |---|---|
 | analógico esquerdo, eixo Y | velocidade (até 1,5 m/s; ajuste com `--max-speed`) |
 | analógico direito, eixo X | taxa de giro (yaw) |
-| D-pad ↑/↓ ou gatilhos | altura; **trava** no valor. Perna de 0,18 a 0,36 m (nominal 0,27) |
+| D-pad ↑/↓ ou gatilhos | altura; **trava** no valor. Perna de 0,18 a 0,52 m (nominal 0,27) |
 | A | parada suave |
 | B | freio forte |
-| X | trem de pouso: abaixado ↔ recolhido |
+| X | pousar ↔ levantar (o trem de pouso abre e fecha sozinho) |
 | Start | reseta alvos e altura |
 
 Se o mapeamento for diferente: `python3 scripts/inspect_gamepad.py`.
+
+O robô nasce **estacionado** (perna em 0,18 m, trem abaixado, keyframe `parked`) e levanta sozinho:
+sobe a perna, recolhe o trem quando está parado e só então obedece ao controle. O X pede para pousar:
+ele para, abaixa o trem e desce até apoiar. Os scripts de medição (`check_model`, `analyze_balance`,
+`drive_demo`, `diagnose`) esperam o robô levantar antes de medir.
 
 ### Medir
 
@@ -86,9 +93,14 @@ Com `state_source="sim"` (ou `--state sim` nos scripts) o controlador usa a velo
 
 Para sensores mais realistas, `ImuConfig` tem ruído e bias de giro e o modo `mahony`, que estima a atitude só com giro e acelerômetro. Veja `../docs/notas_modelo_controle.md`.
 
+## RL residual em GPU (MuJoCo Warp)
+
+O treino de RL atual roda no MuJoCo Warp, com o mesmo modelo e o mesmo controlador, e soma um residual
+ao LQR + VMC. Veja [warp_rl/README.md](warp_rl/README.md).
+
 ## Isaac Sim / primeiro teste de RL
 
-O fluxo atualizado para Isaac Sim 6.1 e Isaac Lab v3.0.0-EA está em [isaac/README.md](isaac/README.md). Inclui diagnóstico do runtime compartilhado, conversão URDF → USD com fechamento dos laços, teste físico e tarefa inicial de equilíbrio com PPO. A conversão real, o teste PhysX com dois robôs e um PPO de 20 iterações foram executados em CPU. O primeiro treino de terreno em GPU também foi concluído: 3.000 atualizações com 128 ambientes, avaliação e vídeos. O desempenho em escadas e o rastreamento de comandos ainda precisam melhorar; veja [os resultados](../docs/terrain-run-2026-10-31.md).
+O fluxo atualizado para Isaac Sim 6.1 e Isaac Lab v3.0.0-EA está em [isaac/README.md](isaac/README.md). Inclui diagnóstico do runtime compartilhado, conversão URDF → USD com fechamento dos laços, teste físico e tarefa inicial de equilíbrio com PPO. A conversão real, o teste PhysX com dois robôs e um PPO de 20 iterações foram executados em CPU. O primeiro treino de terreno em GPU (torque bruto) não aprendeu a equilibrar; veja o [post-mortem](../docs/terrain-run-2026-10-31.md). O RL atual é o residual em [warp_rl/](warp_rl/README.md).
 
 ## Regenerar
 

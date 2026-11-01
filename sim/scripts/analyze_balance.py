@@ -70,6 +70,7 @@ def main():
         imu.gyro_noise, imu.gyro_bias, imu.angle_noise, imu.acc_noise = 0.005, 0.002, 0.002, 0.05
     controller = RepoControlPolicy(mujoco, model, imu, state_source=args.state)
     controller.reset(data)
+    rm.stand_up(mujoco, model, data, controller)   # nasce estacionado; mede a partir do robo em pe
 
     leg = args.leg if args.leg is not None else controller.target.leg_length
     dt = model.opt.timestep

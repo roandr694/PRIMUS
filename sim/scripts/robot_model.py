@@ -1,4 +1,4 @@
-"""Utilitarios comuns: caminhos dos modelos, carga com a keyframe "home" e cinematica da perna 5 barras.
+"""Utilitarios comuns: caminhos dos modelos, carga com a keyframe "parked" e cinematica da perna 5 barras.
 
 Usado pelos scripts de simulacao e pelo lqr_design.py (que tira as massas/inercias direto do MJCF).
 """
@@ -6,6 +6,9 @@ import math
 from pathlib import Path
 
 import numpy as np
+
+import _paths  # noqa: F401  (control/ no sys.path)
+import five_bar
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MODEL_PATH = PROJECT_ROOT / "models" / "cena_arena.xml"        # arena (terreno + obstaculos)
@@ -28,7 +31,7 @@ def require_mujoco():
 
 
 def load(path=None, flat=False):
-    """Carrega a cena e coloca o robo na keyframe "home" (apoiado nas rodas, pose do CAD)."""
+    """Carrega a cena e coloca o robo na keyframe 0, "parked" (estacionado: perna em 0.18 m, trem abaixado)."""
     mujoco = require_mujoco()
     path = Path(path) if path else (FLAT_MODEL_PATH if flat else MODEL_PATH)
     model = mujoco.MjModel.from_xml_path(str(path))
@@ -78,10 +81,16 @@ def solve_knees(mujoco, model, data, side, iters=30):
 
 
 def set_symmetric_hips(mujoco, model, data, a):
-    """hip_Yp = +a, hip_Ym = -a nas duas pernas (encolhe a perna simetricamente) e fecha os lacos."""
+    """hip_Yp = +a, hip_Ym = -a nas duas pernas (encolhe a perna simetricamente) e fecha os lacos.
+
+    Os joelhos saem da solucao analitica (ramo com a roda para baixo); o Newton so refina."""
     for s in SIDES:
         data.qpos[_jadr(mujoco, model, f"hip_Yp_{s}")] = a
         data.qpos[_jadr(mujoco, model, f"hip_Ym_{s}")] = -a
+        c = five_bar.closure(s, a, -a)
+        if c is not None:
+            data.qpos[_jadr(mujoco, model, f"knee_Yp_{s}")] = c[0]
+            data.qpos[_jadr(mujoco, model, f"knee_Ym_{s}")] = c[1]
         solve_knees(mujoco, model, data, s)
     mujoco.mj_kinematics(model, data)
 
@@ -97,16 +106,9 @@ def leg_vector_base(mujoco, model, data, side):
 
 
 def pose_for_leg_length(mujoco, model, data, L0):
-    """Coloca as duas pernas no comprimento L0 (bissecao no angulo simetrico dos quadris). Retorna o angulo."""
-    lo, hi = 0.0, math.radians(85.0)
-    for _ in range(50):
-        a = 0.5 * (lo + hi)
-        set_symmetric_hips(mujoco, model, data, a)
-        fy, fz = leg_vector_base(mujoco, model, data, "xp")
-        if math.hypot(fy, fz) > L0:
-            lo = a
-        else:
-            hi = a
+    """Coloca as duas pernas no comprimento L0 (angulo simetrico dos quadris, analitico). Retorna o angulo."""
+    a = five_bar.symmetric_angle_for_length("xp", L0)
+    set_symmetric_hips(mujoco, model, data, a)
     return a
 
 
@@ -165,3 +167,17 @@ def leg_lqr_params(mujoco, model, L0):
         "R": float(model.geom_size[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, f"wheel_{side}_tire")][0]),
         "body_com_forward_of_hip": float(cb[1] - hip[1]),
     }
+
+
+def stand_up(mujoco, model, data, controller, timeout=8.0):
+    """O robo nasce estacionado (keyframe "parked"). Roda o controlador parado ate ele levantar e
+    recolher o trem (modo "operating"), para os scripts medirem a partir daqui. Devolve o tempo [s]."""
+    from repo_control_policy import Mode, RobotCommand
+    t = 0.0
+    while controller.mode != Mode.OPERATING:
+        if t > timeout:
+            raise RuntimeError(f"o robo nao saiu do pouso em {timeout:.0f} s (modo {controller.mode})")
+        controller.apply(data, RobotCommand())
+        mujoco.mj_step(model, data)
+        t += model.opt.timestep
+    return t

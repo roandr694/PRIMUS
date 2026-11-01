@@ -7,7 +7,6 @@ biped_project/
 ├── experiments/
 │   ├── <timestamp>-terrain-<device>/
 │   ├── state/              # Current task/device/asset smoke receipts
-│   └── archive/            # Preserved original training runs and duplicate logs
 ├── videos/                 # Descriptive previews and per-experiment videos
 ├── reports/                # Human-readable reports and historical setup evidence
 └── scratch/
@@ -39,5 +38,8 @@ The separate archived `scratch/bootstrap/IsaacLab-6.1` is not the selected runti
 
 The workspace folder was subsequently renamed to `biped_project` (underscores).
 `experiments/latest` and `videos/latest` point to the latest reviewed GPU run.
+
+Cleanup (2026-10-31, later): failed/diverged runs, CPU validation runs, `experiments/archive` and
+`scratch/bootstrap` were moved to the system trash. Paths above that mention them no longer exist.
 The videos folder for that run provides `rollout.mp4` and `training-progress.mp4`
 for convenient viewing; the native clips remain in their original subdirectories.

@@ -24,7 +24,10 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT.parent / "control"))
 from robot_def import LEGS, GEAR, link_origin  # noqa: E402
+import five_bar  # noqa: E402
+from repo_control_policy import PARK_LEG_LENGTH  # noqa: E402
 
 MODELS = ROOT / "models"
 CAD = MODELS / "cad"
@@ -207,8 +210,28 @@ COMMON_VISUAL = '''  <visual>
 SPAWN_QUAT = "0.70710678 0 0 -0.70710678"
 
 
+def parked_qpos(z_cad):
+    """Estacionado: pernas em PARK_LEG_LENGTH com o trem de pouso abaixado (0 rad), rodas no chao.
+    A ordem das juntas segue a arvore: por perna hip_Yp, knee_Yp, wheel, hip_Ym, knee_Ym; depois os trens."""
+    joints, foot_z = [], []
+    for s in SIDES:
+        a = five_bar.symmetric_angle_for_length(s, PARK_LEG_LENGTH)
+        knee_p, knee_m, foot = five_bar.closure(s, a, -a)
+        joints += [a, knee_p, 0.0, -a, knee_m]
+        foot_z.append(foot[1])
+    joints += [0.0, 0.0]
+    z = z_cad + LEGS["xp"]["foot"][2] / 1000.0 - min(foot_z)
+    return z, joints
+
+
 def key(z):
-    return f'  <keyframe>\n    <key name="home" qpos="0 0 {z:.4f} {SPAWN_QUAT} {" ".join(["0"] * 12)}"/>\n  </keyframe>'
+    """Keyframe 0 = "parked" (pose inicial padrao: o controlador levanta e recolhe o trem sozinho);
+    keyframe 1 = "home" (pose do CAD, perna quase esticada, trem abaixado)."""
+    zp, jp = parked_qpos(z)
+    return (f'  <keyframe>\n'
+            f'    <key name="parked" qpos="0 0 {zp:.4f} {SPAWN_QUAT} {" ".join(f"{q:.6f}" for q in jp)}"/>\n'
+            f'    <key name="home" qpos="0 0 {z:.4f} {SPAWN_QUAT} {" ".join(["0"] * 12)}"/>\n'
+            f'  </keyframe>')
 
 
 def arena_xml(z):

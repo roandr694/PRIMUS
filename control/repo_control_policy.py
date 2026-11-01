@@ -37,10 +37,23 @@ import numpy as np
 from lqr_gains import LQR_COEFFS, L0_VALID_RANGE
 
 
-NOMINAL_LEG_LENGTH = 0.27      # [m] quadril virtual -> eixo da roda (perna toda esticada = 0.394 m)
-MIN_LEG_LENGTH = 0.18          # abaixo disso o trem de pouso abaixado encosta no chao
-MAX_LEG_LENGTH = 0.36
+NOMINAL_LEG_LENGTH = 0.27      # [m] quadril virtual -> eixo da roda (pose do CAD = 0.394 m)
+# Faixa geometrica (malhas de colisao): a roda bate no chassi abaixo de ~0.17 m; perna toda esticada
+# (singular) = 0.565 m. A faixa de operacao deixa folga nas duas pontas.
+MIN_LEG_LENGTH = 0.18          # perto da roda tocar o chassi; tambem e a altura de estacionar
+MAX_LEG_LENGTH = 0.52          # ainda longe da singularidade (angulo entre as barras inferiores ~47 graus)
+PARK_LEG_LENGTH = MIN_LEG_LENGTH   # com o trem abaixado, as pontas encostam no chao plano nesta altura
+GEAR_SAFE_LENGTH = 0.24        # daqui para cima o trem abaixado fica >= ~5 cm acima do chao plano
 SIDES = ("xp", "xm")           # xp = direita, xm = esquerda
+
+
+class Mode:
+    """Modo automatico do robo. O trem de pouso nao e comandado pelo usuario: ele so pede para operar ou
+    para pousar (RobotCommand.park), e o controlador abaixa/recolhe o trem nas transicoes."""
+    PARKED = "parked"              # perna em PARK_LEG_LENGTH, trem abaixado apoiado no chao, sem balanco
+    STANDING_UP = "standing_up"    # equilibrando, subindo a perna; recolhe o trem quando estavel
+    OPERATING = "operating"        # trem recolhido, qualquer altura em [MIN, MAX]
+    LANDING = "landing"            # para, abaixa o trem numa altura segura e desce ate apoiar o trem
 
 
 @dataclass
@@ -50,7 +63,7 @@ class RobotCommand:
     leg_length: float = NOMINAL_LEG_LENGTH
     roll_angle: float = 0.0         # [rad]
     brake: bool = False             # freio forte: zera o alvo de velocidade na hora
-    gear_down: bool = True          # trem de pouso abaixado (pose do CAD) ou recolhido
+    park: bool = False              # True: para, abaixa o trem e estaciona; False: levanta e opera
 
 
 @dataclass
@@ -336,6 +349,20 @@ class RepoControlPolicy:
         self.theta_zero_max = 0.15      # [rad]
         self.gear_down_angle = {"gear_front": 0.0, "gear_rear": 0.0}
         self.gear_up_angle = {"gear_front": math.radians(-100.0), "gear_rear": math.radians(100.0)}
+        self.gear_qpos = {g: int(model.jnt_qposadr[mid(O.mjOBJ_JOINT, g)]) for g in self.servo}
+
+        # ---- modo automatico + trem de pouso (veja Mode) ----
+        self.mode = Mode.OPERATING
+        self.gear_down = False
+        self.gear_travel_s = 0.6        # [s] tempo para o servo do trem completar o curso (sem sensor)
+        self.gear_timer = self.gear_travel_s
+        self.stable_time = 0.0          # [s] ha quanto tempo o robo esta parado e em pe
+        self.length_ref = NOMINAL_LEG_LENGTH
+        self.stand_rate = 0.12          # [m/s] subida/descida da perna ate a altura segura do trem
+        self.land_rate = 0.05           # [m/s] descida final ate o trem apoiar
+        self.park_wheel_damping = 3.0   # [N.m/(m/s)] estacionado: segura as rodas
+        self.park_leg_kp = 30.0         # [N.m/rad] estacionado: perna perpendicular ao corpo
+        self.park_leg_kd = 1.5          # [N.m.s/rad]
 
     # ---------------------------------------------------------------------------------------
     def reset(self, data):
@@ -357,6 +384,19 @@ class RepoControlPolicy:
         self.target_yaw = yaw
         self.last_leg = {s: self._leg_state(data, s, None, pitch, gyro[0]) for s in SIDES}
         self.theta_zero = 0.0
+        # modo inicial pelo estado: o robo real sabe o ultimo comando do servo do trem e le os quadris
+        avg_len = 0.5 * (self.last_leg["xp"].length + self.last_leg["xm"].length)
+        gear_is_down = all(abs(float(data.qpos[a]) - self.gear_down_angle[g]) < 0.3 for g, a in self.gear_qpos.items())
+        if gear_is_down and avg_len <= PARK_LEG_LENGTH + 0.02:
+            self.mode = Mode.PARKED
+        elif gear_is_down:
+            self.mode = Mode.STANDING_UP
+        else:
+            self.mode = Mode.OPERATING
+        self.gear_down = gear_is_down
+        self.gear_timer = self.gear_travel_s
+        self.stable_time = 0.0
+        self.length_ref = clamp(avg_len, self.min_leg_length, self.max_leg_length)
 
     def apply(self, data, command=None):
         command = command or RobotCommand()
@@ -373,11 +413,18 @@ class RepoControlPolicy:
 
         avg_len = 0.5 * (legs["xp"].length + legs["xm"].length)
         avg_dlen = 0.5 * (legs["xp"].d_length + legs["xm"].d_length)
-        self._update_target(command, yaw, avg_len, dt)
+        command = self._update_mode(command, pitch, pitch_rate, avg_len, dt)
+        balancing = self.mode != Mode.PARKED
+        if balancing:
+            self._update_target(command, yaw, avg_len, dt)
+        else:
+            # estacionado: os alvos seguem o estado, para o LQR comecar sem erro ao levantar
+            self.target_position, self.target_speed, self.target_yaw = self.x, 0.0, yaw
+            self.theta_zero = 0.0
 
         # integral lento do erro de posicao -> offset de equilibrio da perna. Compensa o CoM fora do eixo
         # (o CoM do corpo fica ~1 cm atras do quadril) e rampas, sem o robo ficar rolando devagar.
-        if grounded and not command.brake:
+        if balancing and grounded and not command.brake:
             self.theta_zero = clamp(self.theta_zero + self.theta_zero_ki * (self.x - self.target_position) * dt,
                                     -self.theta_zero_max, self.theta_zero_max)
         theta = 0.5 * (legs["xp"].theta + legs["xm"].theta) - self.theta_zero
@@ -390,7 +437,9 @@ class RepoControlPolicy:
         # ---------- yaw (diferencial das rodas) ----------
         yaw_rate_sp = command.yaw_speed_cmd + self.yaw_pid.outer.calc(0.0, -wrap(self.target_yaw - yaw))
         yaw_out = self.yaw_pid.inner.calc(yaw_rate_sp, yaw_rate)   # + = vira para a esquerda
-        if grounded:
+        if not balancing:
+            T_side = {s: -self.park_wheel_damping * self.dx for s in SIDES}   # so segura as rodas
+        elif grounded:
             T_side = {"xp": T + yaw_out, "xm": T - yaw_out}           # roda direita mais para frente -> esquerda
         else:
             T_side = {"xp": 0.0, "xm": 0.0}
@@ -399,11 +448,11 @@ class RepoControlPolicy:
         body_z, body_vz = float(data.qpos[2]), float(data.qvel[2])
         self.ref_z += self.susp_ref_alpha * (body_z - self.ref_z)
         susp = clamp(-self.susp_height_gain * (body_z - self.ref_z) - self.susp_vel_gain * body_vz, -0.06, 0.06)
-        length_target = clamp(command.leg_length + susp, self.min_leg_length, self.max_leg_length) \
-            if grounded else self.air_retract_length
+        length_target = clamp(self.length_ref + susp, self.min_leg_length, self.max_leg_length) \
+            if (grounded or not balancing) else self.air_retract_length
         f_len = self.leg_length_pid.calc(length_target, avg_len, avg_dlen)
         roll_out = self.roll_pid.calc(command.roll_angle, roll, roll_rate)   # roll > ref -> negativo
-        bias = self.force_bias_n if grounded else 0.0
+        bias = self.force_bias_n if (grounded or not balancing) else 0.0
         F = {"xp": f_len + bias - roll_out, "xm": f_len + bias + roll_out}  # roll + (direita desce) -> empurra a direita
         for s in SIDES:
             if legs[s].length > self.max_leg_length:
@@ -413,6 +462,9 @@ class RepoControlPolicy:
         la = self.leg_angle_pid.calc(0.0, legs["xm"].theta - legs["xp"].theta,
                                      legs["xm"].d_theta - legs["xp"].d_theta)
         Tp_side = {"xm": Tp + la, "xp": Tp - la}
+        if not balancing:   # estacionado: cada perna perpendicular ao corpo (body_angle = 0)
+            Tp_side = {s: -self.park_leg_kp * legs[s].body_angle - self.park_leg_kd * legs[s].d_body_angle
+                       for s in SIDES}
 
         tau = {}
         for s in SIDES:
@@ -428,7 +480,7 @@ class RepoControlPolicy:
             controls[k] = clamp(v, -lim, lim)
             data.ctrl[self.act[k]] = controls[k] / self.gear[k]
         for g, a in self.servo.items():
-            data.ctrl[a] = (self.gear_down_angle if command.gear_down else self.gear_up_angle)[g]
+            data.ctrl[a] = (self.gear_down_angle if self.gear_down else self.gear_up_angle)[g]
 
         # chaves com os nomes antigos (left = xm, right = xp) para os scripts de analise/joystick
         return {
@@ -438,11 +490,72 @@ class RepoControlPolicy:
             "left_leg_length": legs["xm"].length, "right_leg_length": legs["xp"].length,
             "lqr_out_t": T, "lqr_out_tp": Tp,
             "touching_ground": grounded, "tire_force": dict(self.tire_force),
+            "mode": self.mode, "gear_down": self.gear_down, "leg_length_ref": self.length_ref,
             "controls": controls,   # torques NA JUNTA [N.m]
             "left_wheel": controls["wheel_xm"], "right_wheel": controls["wheel_xp"],
         }
 
     # ---------------------------------------------------------------------------------------
+    def _update_mode(self, command, pitch, pitch_rate, avg_len, dt):
+        """Maquina de estados do pouso. Atualiza modo, trem e self.length_ref; devolve o comando efetivo.
+
+        estacionado --(park=False)--> levantando: equilibra, sobe a perna ate >= GEAR_SAFE_LENGTH,
+            recolhe o trem quando parado e estavel --> operando (trem recolhido, altura livre)
+        operando/levantando --(park=True)--> pousando: para, sobe ate a altura segura se preciso,
+            abaixa o trem, desce devagar ate PARK_LEG_LENGTH --> estacionado."""
+        # "parado e em pe": sem girar e sem andar. O pitch de equilibrio depende do CoM (incerto no robo real),
+        # entao o limite de pitch e folgado; ele so exclui o robo caindo.
+        stable = abs(pitch) < 0.25 and abs(pitch_rate) < 0.3 and abs(self.dx) < 0.1
+        self.stable_time = self.stable_time + dt if stable else 0.0
+        self.gear_timer += dt
+        gear_settled = self.gear_timer >= self.gear_travel_s
+        safe = GEAR_SAFE_LENGTH + 0.01
+        wanted = clamp(command.leg_length, self.min_leg_length, self.max_leg_length)
+
+        if self.mode == Mode.PARKED and not command.park:
+            self.mode = Mode.STANDING_UP
+        elif self.mode in (Mode.STANDING_UP, Mode.OPERATING) and command.park:
+            self.mode = Mode.LANDING
+        elif self.mode == Mode.LANDING and not command.park:
+            self.mode = Mode.STANDING_UP
+
+        if self.mode == Mode.STANDING_UP:
+            if self.gear_down and avg_len >= GEAR_SAFE_LENGTH and self.stable_time >= 0.5:
+                self._set_gear(False)
+            elif not self.gear_down and gear_settled:
+                self.mode = Mode.OPERATING
+        elif self.mode == Mode.LANDING:
+            if not self.gear_down and avg_len >= GEAR_SAFE_LENGTH - 0.005 and self.stable_time >= 0.3:
+                self._set_gear(True)
+            elif self.gear_down and gear_settled and avg_len <= PARK_LEG_LENGTH + 0.004:
+                self.mode = Mode.PARKED
+
+        if self.mode == Mode.PARKED:
+            self.length_ref = PARK_LEG_LENGTH
+        elif self.mode == Mode.OPERATING:
+            self.length_ref = wanted
+        else:
+            if self.mode == Mode.LANDING and self.gear_down and gear_settled:
+                target = PARK_LEG_LENGTH
+                rate = self.stand_rate if self.length_ref > safe else self.land_rate
+            elif self.mode == Mode.STANDING_UP and not self.gear_down:
+                target, rate = wanted, self.stand_rate
+            else:   # trem abaixado (ou abaixando) longe do chao
+                target, rate = (max(wanted, safe) if self.mode == Mode.STANDING_UP else max(self.length_ref, safe)), self.stand_rate
+            step = rate * dt
+            self.length_ref += clamp(target - self.length_ref, -step, step)
+
+        if self.mode == Mode.OPERATING:
+            return command
+        # levantando/pousando/estacionado: fica parado no lugar, ignora velocidade e giro do usuario
+        return RobotCommand(speed_cmd=0.0, yaw_speed_cmd=0.0, leg_length=self.length_ref,
+                            roll_angle=command.roll_angle, brake=False, park=command.park)
+
+    def _set_gear(self, down):
+        if down != self.gear_down:
+            self.gear_down = down
+            self.gear_timer = 0.0
+
     def _update_target(self, command, yaw, leg_length, dt):
         step_ratio = dt / 0.004
         slope = max(0.003 * step_ratio, (-(leg_length - NOMINAL_LEG_LENGTH) * 0.02 + self.accel_step) * step_ratio)
