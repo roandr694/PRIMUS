@@ -1,23 +1,18 @@
-"""Re-deriva a tabela de ganhos LQR K(L0) do robo bipedal com rodas (robo NOVO, do CAD).
+"""Derives the LQR gain table K(L0) of the wheel-legged robot from the CAD-generated MJCF.
 
-Porte em Python do `sys_calc.m` do projeto de referencia (Skythinker616/foc-wheel-legged-robot):
-para cada comprimento de perna L0, lineariza o modelo planar roda + pendulo de comprimento variavel +
-corpo, discretiza, resolve o LQR discreto de horizonte infinito e ajusta cada ganho por um polinomio
-cubico em L0.
+Python port of `sys_calc.m` from the reference project (Skythinker616/foc-wheel-legged-robot): for each leg
+length L0 it linearises the planar wheel + variable-length pendulum + body model, discretises it, solves the
+infinite-horizon discrete LQR and fits each gain with a cubic polynomial in L0.
 
-Diferencas em relacao a versao antiga deste projeto:
-  * os parametros fisicos NAO sao mais chutes: saem do MJCF gerado do CAD (models/robo_bipedal.xml),
-    calculados em cada L0 com a perna 5 barras posicionada de verdade (robot_model.leg_lqr_params):
-    massa e CoM da perna (o motor da roda fica na canela, entao o CoM da perna fica perto da roda,
-    nao no meio), inercia da perna em torno do proprio CoM, inercia da roda + armature do motor,
-    CoM do corpo (abaixo do quadril neste robo);
-  * o modelo e de MEIO robo (1 perna + 1 roda + metade do corpo), entao T e o torque de UMA roda
-    e Tp o torque virtual de UMA perna -- exatamente o que o controlador aplica em cada lado;
-  * dt = 0.001 s (passo do MJCF; o controle roda a cada passo).
+The physical parameters come from models/robo_bipedal.xml at each L0, with the closed 5-bar leg actually posed
+(robot_model.leg_lqr_params): leg mass and CoM (the wheel motor sits on the shin, so the leg CoM is near the
+wheel), leg inertia about its CoM, wheel inertia + rotor armature, body CoM (below the hip on this robot).
+The model is HALF a robot (1 leg + 1 wheel + half body), so T is the torque of ONE wheel and Tp the virtual
+torque of ONE leg, exactly what the controller applies per side. dt = 0.001 s (the MJCF step).
 
-    python3 control/lqr_design.py --validate   # confere o pipeline contra o robo pequeno de referencia
-    python3 control/lqr_design.py              # imprime parametros e ganhos do robo
-    python3 control/lqr_design.py --write      # gera control/lqr_gains.py
+    python3 control/lqr_design.py --validate   # checks the pipeline against the small reference robot
+    python3 control/lqr_design.py              # prints the robot parameters and gains
+    python3 control/lqr_design.py --write      # writes control/lqr_gains.py
 """
 
 import argparse
@@ -26,12 +21,12 @@ import numpy as np
 from scipy.linalg import expm, solve_discrete_are
 
 
-# Ordem do estado igual ao sys_calc.m:
-#   x = [theta, dTheta, x, dx, phi, dPhi]     theta = angulo da perna, phi = pitch do corpo
-#   u = [T (torque da roda), Tp (torque virtual no quadril)]
+# State order as in sys_calc.m:
+#   x = [theta, dTheta, x, dx, phi, dPhi]     theta = leg angle, phi = body pitch
+#   u = [T (wheel torque), Tp (virtual hip torque)]
 STATE_LABELS = ["theta", "dTheta", "x", "dx", "phi", "dPhi"]
 
-# Robo pequeno da referencia (sys_calc.m) -- so para validar o pipeline.
+# Small reference robot (sys_calc.m), only to validate the pipeline.
 SMALL_ROBOT = {
     "R": 0.02,
     "mw": 0.251327,
@@ -48,22 +43,21 @@ SMALL_ROBOT = {
     "L0_sweep": np.arange(0.04, 0.14 + 1e-9, 0.01),
 }
 
-# Robo deste projeto. Os parametros fisicos vem do MJCF (veja robot_params()).
+# This robot. The physical parameters come from the MJCF (see robot_params()).
 # Q = [theta, dTheta, x, dx, phi, dPhi], Ruu = [T, Tp].
 ROBOT = {
     "g": 9.81,
     "dt": 0.001,
     "Q": [10.0, 4.0, 40.0, 80.0, 600.0, 10.0],
     "Ruu": [4.0, 4.0],
-    # faixa de L0 (quadril virtual -> eixo da roda) em que a tabela e ajustada; cobre a faixa de operacao
-    # do controlador (0.18 a 0.52 m) com folga. Geometria (malhas de colisao): a roda bate no chassi
-    # abaixo de ~0.17 m; a perna toda esticada (singular) e 0.565 m; a pose do CAD e 0.394 m.
+    # L0 range (virtual hip -> wheel axle) of the fit; covers the controller range (0.18-0.52 m) with margin.
+    # Geometry (collision meshes): wheel hits the chassis below ~0.17 m; fully extended (singular) 0.565 m.
     "L0_sweep": np.arange(0.17, 0.54 + 1e-9, 0.01),
 }
 
 
 def robot_params(L0, _cache={}):
-    """Parametros do meio robo no comprimento L0, tirados do MJCF (cacheados)."""
+    """Half-robot parameters at leg length L0, from the MJCF (cached)."""
     key = round(float(L0), 5)
     if key not in _cache:
         import os, sys
@@ -147,10 +141,10 @@ def dlqr(G, H, Q, R):
 
 
 def gain_schedule(params):
-    """Coeficientes cubicos [c3, c2, c1, c0] para cada um dos 12 ganhos. Forma (2, 6, 4).
+    """Cubic coefficients [c3, c2, c1, c0] of each of the 12 gains, shape (2, 6, 4).
 
-    Se params tem "per_L0" (funcao L0 -> dict), os parametros fisicos sao atualizados em cada L0;
-    senao usa o CoM da perna no meio (L = Lm = L0/2), como no sys_calc.m original.
+    With params["per_L0"] (function L0 -> dict) the physical parameters are updated at each L0; otherwise the
+    leg CoM is at mid-length (L = Lm = L0/2), as in the original sys_calc.m.
     """
     p = dict(params)
     Q = np.diag(params["Q"])
@@ -225,13 +219,13 @@ def robot_design():
 
 
 def emit():
-    print("Parametros fisicos (meio robo) tirados do MJCF:")
+    print("Physical parameters (half robot) from the MJCF:")
     for L0 in (ROBOT["L0_sweep"][0], 0.27, ROBOT["L0_sweep"][-1]):
         p = robot_params(L0)
         print(f"  L0={L0:.2f}: " + ", ".join(f"{k}={v:.4g}" for k, v in p.items()))
     coeffs, L0s, Ks = gain_schedule(robot_design())
     fit_err = max(abs(eval_gain(coeffs, L0) - Ks[:, :, i]).max() for i, L0 in enumerate(L0s))
-    print(f"\nAjuste cubico: erro maximo {fit_err:.3g}")
+    print(f"\nCubic fit: max error {fit_err:.3g}")
     for L0 in (L0s[0], 0.27, L0s[-1]):
         K = eval_gain(coeffs, L0)
         print(f"K(L0={L0:.2f})  T : {np.array2string(K[0], precision=3)}")
@@ -241,14 +235,14 @@ def emit():
 def write_gains(path):
     coeffs, L0s, _ = gain_schedule(robot_design())
     lines = [
-        '"""Tabela de ganhos LQR do robo -- GERADO por control/lqr_design.py --write, nao editar a mao.',
+        '"""LQR gain table of the robot -- GENERATED by control/lqr_design.py --write, do not edit by hand.',
         "",
-        "Cada entrada e o cubico [c3, c2, c1, c0] de um ganho em funcao do comprimento da perna L0:",
+        "Each entry is the cubic [c3, c2, c1, c0] of one gain as a function of the leg length L0:",
         "    K[row, col](L0) = c3*L0**3 + c2*L0**2 + c1*L0 + c0",
-        "row 0 -> torque de UMA roda T [N.m na roda], row 1 -> torque virtual de UMA perna Tp [N.m];",
-        "colunas = estado [theta, dTheta, x, dx, phi, dPhi].  u = -K x.",
+        "row 0 -> torque of ONE wheel T [N.m], row 1 -> virtual torque of ONE leg Tp [N.m];",
+        "columns = state [theta, dTheta, x, dx, phi, dPhi].  u = -K x.",
         f"Q = {ROBOT['Q']}, R = {ROBOT['Ruu']}, dt = {ROBOT['dt']} s.",
-        f"Valido para L0 em [{L0s[0]:.2f}, {L0s[-1]:.2f}] m.",
+        f"Valid for L0 in [{L0s[0]:.2f}, {L0s[-1]:.2f}] m.",
         '"""',
         "",
         f"L0_VALID_RANGE = ({L0s[0]:.4f}, {L0s[-1]:.4f})",
@@ -256,7 +250,7 @@ def write_gains(path):
         "LQR_COEFFS = [",
     ]
     for r in range(2):
-        lines.append(f"    [  # row {r}: {'torque da roda T' if r == 0 else 'torque do quadril Tp'}")
+        lines.append(f"    [  # row {r}: {'wheel torque T' if r == 0 else 'hip torque Tp'}")
         for c in range(6):
             c3, c2, c1, c0 = coeffs[r, c]
             lines.append(f"        ({c3: .10e}, {c2: .10e}, {c1: .10e}, {c0: .10e}),  # d/d({STATE_LABELS[c]})")
@@ -265,13 +259,13 @@ def write_gains(path):
     lines.append("")
     with open(path, "w") as fh:
         fh.write("\n".join(lines))
-    print(f"Escrito {path}")
+    print(f"wrote {path}")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--validate", action="store_true", help="Reproduz os coeficientes do robo pequeno de referencia.")
-    parser.add_argument("--write", action="store_true", help="Escreve control/lqr_gains.py.")
+    parser.add_argument("--validate", action="store_true", help="Reproduce the small reference robot coefficients.")
+    parser.add_argument("--write", action="store_true", help="Write control/lqr_gains.py.")
     args = parser.parse_args()
     if args.validate:
         validate()

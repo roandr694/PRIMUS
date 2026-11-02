@@ -1,19 +1,20 @@
-"""LQR + VMC + PIDs + modo automatico do trem de pouso, em um kernel Warp (uma thread por robo).
+"""LQR + VMC + PIDs + automatic landing gear in one Warp kernel (one thread per robot).
 
-E o mesmo controlador de control/repo_control_policy.py (state_source="robot"), portado linha a linha para
-rodar dentro do grafo CUDA do MuJoCo Warp, a cada passo de fisica (1 kHz), em milhares de robos. Diferencas:
-  * cinematica e jacobiano da perna 5 barras analiticos (control/five_bar.py), em vez de mj_jac;
-  * atitude e giro lidos de qpos/qvel da base (o site do IMU tem a orientacao da base; o modo "sensor" do
-    IMU simulado entrega exatamente isso), sem o atraso de um passo do sensordata;
-  * o residual do RL entra em pontos definidos (veja RESIDUAL); com residual zero e o controlador original.
-tests/test_controller_parity.py compara os torques com o controlador numpy no mesmo estado.
+The same controller as control/repo_control_policy.py (state_source="robot"), ported line by line so it runs
+inside the MuJoCo Warp CUDA graph at every physics step (1 kHz) for thousands of robots. Differences:
+  * 5-bar leg kinematics and Jacobian are analytic (control/five_bar.py) instead of mj_jac;
+  * attitude and rates come from the base qpos/qvel (the IMU site has the base orientation, which is what the
+    simulated IMU "sensor" mode returns), without the one-step sensordata delay;
+  * the RL residual enters at defined points (see RESIDUAL); with a zero residual it is the original controller.
+Physical constants and gains are read from a RepoControlPolicy instance, so the numpy controller is the single
+source of truth; tests/test_controller_parity.py compares both on the same state.
 
-RESIDUAL (por robo, ja em unidades fisicas, so no modo OPERATING):
-  [dL_xp, dL_xm]   offset de comprimento de cada perna [m]: a media soma no alvo de altura; a diferenca
-                   vira referencia de roll do corpo (o PID de roll e quem diferencia as pernas)
-  [dth_xp, dth_xm] offset de angulo de cada perna [rad]: a media desloca o equilibrio do LQR (inclina);
-                   a diferenca e a referencia do PID que sincroniza as pernas (abre uma perna a frente)
-  [dT_xp, dT_xm]   torque somado em cada roda [N.m na junta]
+RESIDUAL (per robot, physical units, only in OPERATING mode):
+  [dL_xp, dL_xm]   leg length offsets [m]: the mean adds to the height target; the difference becomes a body
+                   roll reference (the roll PID is what makes the legs differ)
+  [dth_xp, dth_xm] leg angle offsets [rad]: the mean shifts the LQR equilibrium (leans); the difference is the
+                   reference of the leg synchronisation PID (one leg ahead of the other)
+  [dT_xp, dT_xm]   torque added to each wheel [N.m at the joint]
 """
 import math
 import sys
@@ -31,27 +32,27 @@ from lqr_gains import LQR_COEFFS, L0_VALID_RANGE  # noqa: E402
 
 SIDES = ("xp", "xm")
 
-# ---- modos (mesmos de repo_control_policy.Mode) ----
+# ---- modes (same as repo_control_policy.Mode) ----
 PARKED, STANDING_UP, OPERATING, LANDING = wp.constant(0), wp.constant(1), wp.constant(2), wp.constant(3)
 MODE_NAMES = ("parked", "standing_up", "operating", "landing")
 
-# ---- estado por robo: colunas de `cs` ----
+# ---- per-robot state: columns of `cs` ----
 _STATE = ["mode", "gear_down", "gear_timer", "stable_time", "length_ref",
           "x", "dx", "target_position", "target_speed", "target_yaw", "theta_zero",
-          "yaw_i", "len_i",                                    # integrais dos PIDs de yaw e comprimento
-          "L_xp", "L_xm", "ba_xp", "ba_xm",                    # comprimento e angulo da perna (passo anterior)
-          "tf_xp", "tf_xm", "air_xp", "air_xm",                # forca normal estimada, tempo no ar
+          "yaw_i", "len_i",                                    # yaw and leg-length PI integrals
+          "L_xp", "L_xm", "ba_xp", "ba_xm",                    # leg length and angle (previous step)
+          "tf_xp", "tf_xm", "air_xp", "air_xm",                # estimated normal force, time in the air
           "z1_xp", "z1_xm", "z2_xp", "z2_xm", "ddz_xp", "ddz_xm"]
 S = {n: i for i, n in enumerate(_STATE)}
 NSTATE = len(_STATE)
-# ---- saidas por robo: colunas de `out` (para observacoes e recompensas) ----
+# ---- per-robot outputs: columns of `out` (for observations and rewards) ----
 _OUT = ["theta", "d_theta", "pitch", "roll", "yaw", "pitch_rate", "roll_rate", "yaw_rate", "x", "dx",
         "L_xp", "L_xm", "th_xp", "th_xm", "dL_xp", "dL_xm", "dth_xp", "dth_xm",
         "grounded", "tf_xp", "tf_xm", "protect",
         "tau_hYp_xp", "tau_hYm_xp", "tau_hYp_xm", "tau_hYm_xm", "tau_w_xp", "tau_w_xm"]
 O = {n: i for i, n in enumerate(_OUT)}
 NOUT = len(_OUT)
-# comando: speed [m/s], yaw rate [rad/s], comprimento da perna [m], roll [rad], park (0/1)
+# command: speed [m/s], yaw rate [rad/s], leg length [m], roll [rad], park (0/1)
 NCMD = 5
 NRES = 6
 
@@ -64,29 +65,29 @@ for _n, _i in list(O.items()):
 @wp.struct
 class Params:
     dt: float
-    # geometria da perna no plano (frente, cima) da base [m]; igual nas duas pernas
+    # leg geometry in the base (forward, up) plane [m]; the same for both legs
     hip_p: wp.vec2
     hip_m: wp.vec2
-    arm_p: wp.vec2      # joelho Y+ - quadril Y+ na pose do CAD
+    arm_p: wp.vec2      # knee Y+ - hip Y+ in the CAD pose
     arm_m: wp.vec2
-    r_p: float          # comprimento da barra inferior Y+ (joelho -> eixo)
+    r_p: float          # lower bar Y+ length (knee -> axle)
     r_m: float
     hip_mid: wp.vec2
-    hip_spacing: float  # distancia lateral entre os quadris virtuais das duas pernas [m]
-    # enderecos
-    qp_hipYp: wp.vec2i  # qpos de hip_Yp (xp, xm)
+    hip_spacing: float  # lateral distance between the virtual hips of the two legs [m]
+    # addresses
+    qp_hipYp: wp.vec2i  # qpos of hip_Yp (xp, xm)
     qp_hipYm: wp.vec2i
     qv_hipYp: wp.vec2i
     qv_hipYm: wp.vec2i
     qv_kneeYp: wp.vec2i
     qv_wheel: wp.vec2i
     qp_gear: wp.vec2i
-    sd_acc: int         # sensordata do acelerometro (3)
-    u_hipYp: wp.vec2i   # indices de ctrl
+    sd_acc: int         # accelerometer in sensordata (3)
+    u_hipYp: wp.vec2i   # ctrl indices
     u_hipYm: wp.vec2i
     u_wheel: wp.vec2i
-    u_servo: wp.vec2i   # (frente, tras)
-    # fisica
+    u_servo: wp.vec2i   # (front, rear)
+    # physics
     wheel_radius: float
     below_hip_mass: float
     force_bias: float
@@ -94,7 +95,7 @@ class Params:
     joint_limit: float
     gear_down_angle: wp.vec2
     gear_up_angle: wp.vec2
-    # limites e modo
+    # limits and mode
     min_len: float
     max_len: float
     park_len: float
@@ -107,7 +108,7 @@ class Params:
     park_wheel_damping: float
     park_leg_kp: float
     park_leg_kd: float
-    # odometria / alvos
+    # odometry / targets
     accel_step: float
     nominal_len: float
     pos_lead: float
@@ -122,57 +123,41 @@ class Params:
 
 
 def make_params(model, dt=None):
-    """Params a partir do MjModel (mesmos numeros que RepoControlPolicy le do modelo)."""
+    """Params from the MjModel, with the constants of the numpy controller (single source of truth)."""
+    ref = rcp.RepoControlPolicy(mujoco, model)
     jid = lambda n: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n)
-    aid = lambda n: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, n)
-    bid = lambda n: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, n)
     qp = lambda n: int(model.jnt_qposadr[jid(n)])
     qv = lambda n: int(model.jnt_dofadr[jid(n)])
+    pair = lambda f, a, b=None: wp.vec2i(f(a.format("xp")), f(a.format("xm"))) if b is None else wp.vec2i(f(a), f(b))
     P = five_bar.leg_points("xp")
+    sub = lambda a, b: wp.vec2(P[a][0] - P[b][0], P[a][1] - P[b][1])
+    L = five_bar.LEGS
     p = Params()
     p.dt = float(dt if dt is not None else model.opt.timestep)
-    p.hip_p, p.hip_m = wp.vec2(*P["hipYp"]), wp.vec2(*P["hipYm"])
-    p.arm_p = wp.vec2(P["kneeYp"][0] - P["hipYp"][0], P["kneeYp"][1] - P["hipYp"][1])
-    p.arm_m = wp.vec2(P["kneeYm"][0] - P["hipYm"][0], P["kneeYm"][1] - P["hipYm"][1])
-    p.r_p = math.hypot(P["foot"][0] - P["kneeYp"][0], P["foot"][1] - P["kneeYp"][1])
-    p.r_m = math.hypot(P["foot"][0] - P["kneeYm"][0], P["foot"][1] - P["kneeYm"][1])
-    p.hip_mid = wp.vec2(*five_bar.hip_mid("xp"))
-    L = five_bar.LEGS
+    p.hip_p, p.hip_m, p.hip_mid = wp.vec2(*P["hipYp"]), wp.vec2(*P["hipYm"]), wp.vec2(*five_bar.hip_mid("xp"))
+    p.arm_p, p.arm_m = sub("kneeYp", "hipYp"), sub("kneeYm", "hipYm")
+    p.r_p, p.r_m = wp.length(sub("foot", "kneeYp")), wp.length(sub("foot", "kneeYm"))
     p.hip_spacing = abs((L["xp"]["hipYp"][0] + L["xp"]["hipYm"][0]) - (L["xm"]["hipYp"][0] + L["xm"]["hipYm"][0])) / 2000.0
-    p.qp_hipYp = wp.vec2i(qp("hip_Yp_xp"), qp("hip_Yp_xm"))
-    p.qp_hipYm = wp.vec2i(qp("hip_Ym_xp"), qp("hip_Ym_xm"))
-    p.qv_hipYp = wp.vec2i(qv("hip_Yp_xp"), qv("hip_Yp_xm"))
-    p.qv_hipYm = wp.vec2i(qv("hip_Ym_xp"), qv("hip_Ym_xm"))
-    p.qv_kneeYp = wp.vec2i(qv("knee_Yp_xp"), qv("knee_Yp_xm"))
-    p.qv_wheel = wp.vec2i(qv("wheel_xp"), qv("wheel_xm"))
-    p.qp_gear = wp.vec2i(qp("gear_front"), qp("gear_rear"))
-    p.sd_acc = int(model.sensor_adr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, "imu_acc")])
-    p.u_hipYp = wp.vec2i(aid("hip_Yp_xp"), aid("hip_Yp_xm"))
-    p.u_hipYm = wp.vec2i(aid("hip_Ym_xp"), aid("hip_Ym_xm"))
-    p.u_wheel = wp.vec2i(aid("wheel_xp"), aid("wheel_xm"))
-    p.u_servo = wp.vec2i(aid("servo_gear_front"), aid("servo_gear_rear"))
-    tire = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "wheel_xp_tire")
-    p.wheel_radius = float(model.geom_size[tire][0])
-    wheel_mass = float(model.body_mass[bid("wheel_xp")])
-    p.below_hip_mass = wheel_mass + float(model.body_mass[bid("shin_xp")]) + float(model.body_mass[bid("linkYm_xp")])
-    wheels = sum(float(model.body_mass[bid(f"wheel_{s}")]) for s in SIDES)
-    p.force_bias = (float(model.body_subtreemass[bid("base")]) - wheels) * 9.81 / 2.0
-    p.gear_ratio = float(model.actuator_gear[aid("hip_Yp_xp")][0])
-    p.joint_limit = float(model.actuator_ctrlrange[aid("hip_Yp_xp")][1]) * p.gear_ratio
-    ref = rcp.RepoControlPolicy.__new__(rcp.RepoControlPolicy)   # so para ler os valores padrao
-    p.gear_down_angle = wp.vec2(0.0, 0.0)
-    p.gear_up_angle = wp.vec2(math.radians(-100.0), math.radians(100.0))
-    p.min_len, p.max_len = rcp.MIN_LEG_LENGTH, rcp.MAX_LEG_LENGTH
-    p.park_len, p.gear_safe_len = rcp.PARK_LEG_LENGTH, rcp.GEAR_SAFE_LENGTH
+    p.qp_hipYp, p.qp_hipYm = pair(qp, "hip_Yp_{}"), pair(qp, "hip_Ym_{}")
+    p.qv_hipYp, p.qv_hipYm, p.qv_kneeYp = pair(qv, "hip_Yp_{}"), pair(qv, "hip_Ym_{}"), pair(qv, "knee_Yp_{}")
+    p.qv_wheel, p.qp_gear = pair(qv, "wheel_{}"), pair(qp, "gear_front", "gear_rear")
+    p.sd_acc = ref.imu.adr_a
+    p.u_hipYp = wp.vec2i(ref.act["hip_Yp_xp"], ref.act["hip_Yp_xm"])
+    p.u_hipYm = wp.vec2i(ref.act["hip_Ym_xp"], ref.act["hip_Ym_xm"])
+    p.u_wheel = wp.vec2i(ref.act["wheel_xp"], ref.act["wheel_xm"])
+    p.u_servo = wp.vec2i(ref.servo["gear_front"], ref.servo["gear_rear"])
+    p.wheel_radius, p.below_hip_mass, p.force_bias = ref.wheel_radius, ref.below_hip_mass, ref.force_bias_n
+    p.gear_ratio, p.joint_limit = ref.gear["hip_Yp_xp"], ref.joint_limit["hip_Yp_xp"]
+    p.gear_down_angle = wp.vec2(ref.gear_down_angle["gear_front"], ref.gear_down_angle["gear_rear"])
+    p.gear_up_angle = wp.vec2(ref.gear_up_angle["gear_front"], ref.gear_up_angle["gear_rear"])
+    p.min_len, p.max_len, p.park_len, p.gear_safe_len = rcp.MIN_LEG_LENGTH, rcp.MAX_LEG_LENGTH, rcp.PARK_LEG_LENGTH, rcp.GEAR_SAFE_LENGTH
     p.l0_lo, p.l0_hi = L0_VALID_RANGE
-    p.gear_travel_s, p.stand_rate, p.land_rate = 0.6, 0.12, 0.05
-    p.park_wheel_damping, p.park_leg_kp, p.park_leg_kd = 3.0, 30.0, 1.5
-    p.accel_step, p.nominal_len = 0.006, rcp.NOMINAL_LEG_LENGTH
-    p.pos_lead, p.speed_lead, p.max_yaw_lead = 0.15, 0.6, 1.0
-    p.theta_zero_ki, p.theta_zero_max = -0.1, 0.15
-    p.air_retract_length = rcp.NOMINAL_LEG_LENGTH
-    p.contact_min_force, p.contact_lpf, p.air_grace_s = 15.0, 0.1, 0.03
-    del ref
+    p.nominal_len = rcp.NOMINAL_LEG_LENGTH
+    for name in ("gear_travel_s", "stand_rate", "land_rate", "park_wheel_damping", "park_leg_kp", "park_leg_kd",
+                 "accel_step", "pos_lead", "speed_lead", "max_yaw_lead", "theta_zero_ki", "theta_zero_max",
+                 "air_retract_length", "contact_lpf", "air_grace_s"):
+        setattr(p, name, float(getattr(ref, name)))
+    p.contact_min_force = ref.contact_min_force_n
     return p
 
 
@@ -181,7 +166,7 @@ def lqr_coeffs(device):
 
 
 # ------------------------------------------------------------------------------------------
-# funcoes auxiliares
+# helpers
 # ------------------------------------------------------------------------------------------
 @wp.func
 def rot2(v: wp.vec2, a: float):
@@ -192,7 +177,7 @@ def rot2(v: wp.vec2, a: float):
 
 @wp.func
 def perp(v: wp.vec2):
-    """derivada de rot2(v, a) em a, dividida por da: v girado de +90 graus"""
+    """d rot2(v, a) / da: v rotated by +90 deg"""
     return wp.vec2(-v[1], v[0])
 
 
@@ -213,7 +198,7 @@ def knee_m(prm: Params, hm: float):
 
 @wp.func
 def foot(prm: Params, kp: wp.vec2, km: wp.vec2):
-    """eixo da roda: intersecao dos circulos (raios r_p, r_m) em torno dos joelhos, ramo de baixo"""
+    """wheel axle: intersection of the circles (radii r_p, r_m) around the knees, lower branch"""
     dlt = km - kp
     d = wp.max(wp.length(dlt), 1.0e-6)
     along = (prm.r_p * prm.r_p - prm.r_m * prm.r_m + d * d) / (2.0 * d)
@@ -229,7 +214,7 @@ def foot(prm: Params, kp: wp.vec2, km: wp.vec2):
 
 @wp.func
 def leg_jacobian(prm: Params, hp: float, hm: float, kp: wp.vec2, km: wp.vec2, f: wp.vec2):
-    """d(eixo da roda)/d(hip_Yp, hip_Ym) no plano da base, com os joelhos seguindo o laco fechado"""
+    """d(wheel axle)/d(hip_Yp, hip_Ym) in the base plane, knees following the closed loop"""
     a = f - kp
     b = f - km
     A = wp.mat22(a[0], a[1], b[0], b[1])
@@ -254,7 +239,7 @@ def quat_rot(q: wp.quat):
 
 @wp.func
 def pid_step(err: float, kp: float, ki: float, imax: float, omax: float, integ: float):
-    """PID da referencia (kd = 0): devolve (saida, nova integral)"""
+    """reference-firmware PI: returns (output, new integral)"""
     integ2 = wp.clamp(integ + err * ki, -imax, imax)
     return wp.clamp(err * kp + integ2, -omax, omax), integ2
 
@@ -265,7 +250,7 @@ def pid_step(err: float, kp: float, ki: float, imax: float, omax: float, integ: 
 @wp.kernel
 def reset_kernel(prm: Params, mask: wp.array(dtype=int), qpos: wp.array2d(dtype=float),
                  cs: wp.array2d(dtype=float)):
-    """Estado inicial do controlador a partir da pose (como RepoControlPolicy.reset)."""
+    """Initial controller state from the pose (as RepoControlPolicy.reset)."""
     w = wp.tid()
     if mask[w] == 0:
         return
@@ -314,7 +299,7 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
                    cs: wp.array2d(dtype=float), out: wp.array2d(dtype=float), ctrl: wp.array2d(dtype=float)):
     w = wp.tid()
     dt = prm.dt
-    # ---------------- estado: IMU (orientacao da base) + encoders ----------------
+    # ---------------- state: IMU (base orientation) + encoders ----------------
     q = wp.quat(qpos[w, 4], qpos[w, 5], qpos[w, 6], qpos[w, 3])
     R = quat_rot(q)
     pitch = wp.asin(wp.clamp(R[2, 1], -1.0, 1.0))
@@ -361,7 +346,7 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
         else:
             J1 = J
 
-    # odometria: encoder da roda (relativo a canela) + giro da canela = giro do IMU + quadril + joelho
+    # odometry: wheel encoder (relative to the shin) + shin rotation = IMU pitch rate + hip + knee
     vsum = float(0.0)
     for s in range(2):
         w_shin = pitch_rate + qvel[w, prm.qv_hipYp[s]] + qvel[w, prm.qv_kneeYp[s]]
@@ -371,7 +356,7 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
     cs[w, S_DX] = dx
     cs[w, S_X] = x
 
-    # contato: forca normal estimada pelos torques dos quadris (como no firmware de referencia)
+    # contact: normal force estimated from the hip torques (as in the reference firmware)
     acc_z = R[2, 0] * sensordata[w, prm.sd_acc] + R[2, 1] * sensordata[w, prm.sd_acc + 1] \
         + R[2, 2] * sensordata[w, prm.sd_acc + 2] - 9.81
     grounded = int(1)
@@ -380,7 +365,7 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
         if s == 1:
             J = J1
         tau = wp.vec2(qfrc_actuator[w, prm.qv_hipYp[s]], qfrc_actuator[w, prm.qv_hipYm[s]])
-        ff = wp.inverse(wp.transpose(J)) * tau            # forca da perna na roda (frente, cima)
+        ff = wp.inverse(wp.transpose(J)) * tau            # leg force on the wheel (forward, up)
         fz = R[2, 1] * ff[0] + R[2, 2] * ff[1]
         zrel = R[2, 1] * fwds[s] + R[2, 2] * ups[s]
         ddz = (zrel - 2.0 * cs[w, S_Z1_XP + s] + cs[w, S_Z2_XP + s]) / (dt * dt)
@@ -400,7 +385,7 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
 
     avg_len = 0.5 * (Ls[0] + Ls[1])
 
-    # ---------------- modo automatico (pouso / trem) ----------------
+    # ---------------- automatic mode (landing / gear) ----------------
     park = cmd[w, 4] > 0.5
     mode = int(cs[w, S_MODE])
     gear_down = cs[w, S_GEAR_DOWN] > 0.5
@@ -475,7 +460,7 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
         yaw_cmd = cmd[w, 1]
     balancing = mode != PARKED
 
-    # ---------------- alvos (RepoControlPolicy._update_target) ----------------
+    # ---------------- targets (RepoControlPolicy._update_target) ----------------
     target_position = cs[w, S_TARGET_POSITION]
     target_speed = cs[w, S_TARGET_SPEED]
     target_yaw = cs[w, S_TARGET_YAW]
@@ -523,7 +508,7 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
     Tp = -(lqr_gain(coeffs, 6, l0) * st0 + lqr_gain(coeffs, 7, l0) * st1 + lqr_gain(coeffs, 8, l0) * st2
            + lqr_gain(coeffs, 9, l0) * st3 + lqr_gain(coeffs, 10, l0) * st4 + lqr_gain(coeffs, 11, l0) * st5)
 
-    # yaw (diferencial das rodas): externo P na deriva de heading, interno PI na taxa
+    # yaw (wheel differential): P on heading drift (outer), PI on yaw rate (inner)
     yaw_sp = yaw_cmd + wp.clamp(1.8 * wrap(target_yaw - yaw), -2.0, 2.0)
     yaw_out, yaw_i = pid_step(yaw_sp - yaw_rate, 3.0, 0.004, 2.0, 6.0, cs[w, S_YAW_I])
     cs[w, S_YAW_I] = yaw_i
@@ -533,7 +518,7 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
     elif grounded == 1:
         T_side = wp.vec2(T + yaw_out, T - yaw_out) + r_dT
 
-    # forca ao longo da perna: comprimento + peso + roll
+    # force along the leg: length + weight + roll
     length_target = prm.air_retract_length
     if grounded == 1 or not balancing:
         length_target = wp.clamp(length_ref, prm.min_len, prm.max_len)
@@ -552,7 +537,7 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
         if Ls[s] > prm.max_len:
             F[s] = F[s] - (Ls[s] - prm.max_len) * 2000.0
 
-    # torque virtual da perna: LQR + sincronismo das pernas
+    # virtual leg torque: LQR + leg synchronisation
     la_ref = r_dth[1] - r_dth[0]
     la_sp = wp.clamp(40.0 * (la_ref - (ths[1] - ths[0])), -8.0, 8.0)
     la = wp.clamp(4.0 * (la_sp - (dths[1] - dths[0])), -25.0, 25.0)
@@ -612,7 +597,7 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
 
 
 class BatchedController:
-    """Envolve os kernels; arrays em GPU compartilhados com o MuJoCo Warp (mjw.Data)."""
+    """Wraps the kernels; GPU arrays shared with MuJoCo Warp (mjw.Data)."""
 
     def __init__(self, mjm, nworld, device):
         self.device = device
@@ -626,7 +611,7 @@ class BatchedController:
         self.mask = wp.zeros(nworld, dtype=int, device=device)
 
     def reset(self, d, mask=None):
-        """mask: array int (nworld) com 1 nos robos a reiniciar; None = todos."""
+        """mask: int array (nworld), 1 on the robots to reset; None = all."""
         m = self.mask if mask is None else mask
         if mask is None:
             m.fill_(1)

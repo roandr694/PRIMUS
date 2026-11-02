@@ -1,6 +1,8 @@
 mujoco>=3.2.0
 numpy>=1.26
-pygame>=2.6
-scipy>=1.10   # scripts/lqr_design.py (recalcular os ganhos)
-# so para regenerar malhas a partir do CAD (tools/build_assets.py):
-# trimesh fast-simplification coacd
+scipy>=1.10      # control/lqr_design.py (LQR gains)
+pygame>=2.6      # scripts/run_xbox_viewer.py
+aiohttp>=3.9     # scripts/run_quest_viewer.py (Meta Quest over Wi-Fi)
+pillow>=10       # scripts/run_quest_viewer.py (JPEG video)
+# GPU RL (sim/warp_rl): mujoco-warp, warp-lang, torch (CUDA), rsl-rl-lib==5.4.1, tensordict, imageio-ffmpeg
+# CAD -> meshes (tools/build_assets.py): trimesh fast-simplification coacd

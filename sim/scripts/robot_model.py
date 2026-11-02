@@ -1,38 +1,27 @@
-"""Utilitarios comuns: caminhos dos modelos, carga com a keyframe "parked" e cinematica da perna 5 barras.
+"""Shared helpers: model paths, loading at the "parked" keyframe, 5-bar leg pose, LQR model parameters.
 
-Usado pelos scripts de simulacao e pelo lqr_design.py (que tira as massas/inercias direto do MJCF).
+Used by the simulation scripts and by control/lqr_design.py (which takes masses/inertias from the MJCF).
 """
 import math
 from pathlib import Path
 
 import numpy as np
 
-import _paths  # noqa: F401  (control/ no sys.path)
+import _paths  # noqa: F401  (control/ on sys.path)
 import five_bar
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MODEL_PATH = PROJECT_ROOT / "models" / "cena_arena.xml"        # arena (terreno + obstaculos)
+MODEL_PATH = PROJECT_ROOT / "models" / "cena_arena.xml"        # arena (terrain + obstacles)
 FLAT_MODEL_PATH = PROJECT_ROOT / "models" / "cena_plana.xml"
 ROBOT_PATH = PROJECT_ROOT / "models" / "robo_bipedal.xml"
 
-SIDES = ("xp", "xm")                 # xp = direita (X+), xm = esquerda (X-)
-SIDE_NAME = {"xp": "direita", "xm": "esquerda"}
+SIDES = ("xp", "xm")                 # xp = right (X+), xm = left (X-)
 LEG_BODIES = ("armYp", "armYm", "shin", "linkYm")
 
 
-def require_mujoco():
-    try:
-        import mujoco
-    except ModuleNotFoundError:
-        print("MuJoCo nao esta instalado neste Python. Use o env conda:")
-        print("  conda run -n bipedal python3 -m pip install -r requirements.txt")
-        raise SystemExit(1)
-    return mujoco
-
-
 def load(path=None, flat=False):
-    """Carrega a cena e coloca o robo na keyframe 0, "parked" (estacionado: perna em 0.18 m, trem abaixado)."""
-    mujoco = require_mujoco()
+    """Loads the scene with the robot at keyframe 0, "parked" (legs at 0.18 m, landing gear down)."""
+    import mujoco
     path = Path(path) if path else (FLAT_MODEL_PATH if flat else MODEL_PATH)
     model = mujoco.MjModel.from_xml_path(str(path))
     data = mujoco.MjData(model)
@@ -49,54 +38,23 @@ def reset(mujoco, model, data):
 
 
 # --------------------------------------------------------------------------------------
-# Cinematica da perna (com a base parada, frame da base): pose para um comprimento L0
+# Leg kinematics (base at rest, base frame): pose for a leg length L0
 # --------------------------------------------------------------------------------------
 def _jadr(mujoco, model, name):
     return int(model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)])
 
 
-def solve_knees(mujoco, model, data, side, iters=30):
-    """Ajusta os 2 joelhos passivos para fechar o laco (pe do link Y- == centro da roda na canela)."""
-    kp, km = _jadr(mujoco, model, f"knee_Yp_{side}"), _jadr(mujoco, model, f"knee_Ym_{side}")
-    s_foot = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, f"foot_{side}")
-    s_wc = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, f"wheel_center_{side}")
-
-    def res():
-        mujoco.mj_kinematics(model, data)
-        return (data.site_xpos[s_foot] - data.site_xpos[s_wc])[1:]
-
-    for _ in range(iters):
-        r = res()
-        if np.abs(r).max() < 1e-9:
-            break
-        J = np.zeros((2, 2))
-        for c, adr in enumerate((kp, km)):
-            data.qpos[adr] += 1e-6
-            J[:, c] = (res() - r) / 1e-6
-            data.qpos[adr] -= 1e-6
-        dq = np.linalg.lstsq(J, -r, rcond=None)[0]
-        data.qpos[kp] += dq[0]
-        data.qpos[km] += dq[1]
-    return float(np.abs(res()).max())
-
-
 def set_symmetric_hips(mujoco, model, data, a):
-    """hip_Yp = +a, hip_Ym = -a nas duas pernas (encolhe a perna simetricamente) e fecha os lacos.
-
-    Os joelhos saem da solucao analitica (ramo com a roda para baixo); o Newton so refina."""
+    """hip_Yp = +a, hip_Ym = -a on both legs; knees from the analytic closed 5-bar."""
     for s in SIDES:
-        data.qpos[_jadr(mujoco, model, f"hip_Yp_{s}")] = a
-        data.qpos[_jadr(mujoco, model, f"hip_Ym_{s}")] = -a
-        c = five_bar.closure(s, a, -a)
-        if c is not None:
-            data.qpos[_jadr(mujoco, model, f"knee_Yp_{s}")] = c[0]
-            data.qpos[_jadr(mujoco, model, f"knee_Ym_{s}")] = c[1]
-        solve_knees(mujoco, model, data, s)
+        knee_p, knee_m, _ = five_bar.closure(s, a, -a)
+        for joint, value in (("hip_Yp", a), ("hip_Ym", -a), ("knee_Yp", knee_p), ("knee_Ym", knee_m)):
+            data.qpos[_jadr(mujoco, model, f"{joint}_{s}")] = value
     mujoco.mj_kinematics(model, data)
 
 
 def leg_vector_base(mujoco, model, data, side):
-    """Vetor quadril-virtual -> centro da roda no frame da base, como (frente, cima)."""
+    """Virtual hip -> wheel centre in the base frame, as (forward, up)."""
     b = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base")
     R = data.xmat[b].reshape(3, 3)
     h = data.site_xpos[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, f"hip_mid_{side}")]
@@ -106,22 +64,22 @@ def leg_vector_base(mujoco, model, data, side):
 
 
 def pose_for_leg_length(mujoco, model, data, L0):
-    """Coloca as duas pernas no comprimento L0 (angulo simetrico dos quadris, analitico). Retorna o angulo."""
+    """Puts both legs at length L0 (symmetric hip angle, analytic). Returns the angle."""
     a = five_bar.symmetric_angle_for_length("xp", L0)
     set_symmetric_hips(mujoco, model, data, a)
     return a
 
 
 def leg_lqr_params(mujoco, model, L0):
-    """Parametros do modelo planar (meio robo = 1 perna + 1 roda + meio corpo) para o LQR, no comprimento L0.
+    """Planar model parameters (half robot = 1 leg + 1 wheel + half body) for the LQR at leg length L0.
 
-    Retorna L (roda -> CoM da perna), Lm (CoM da perna -> quadril), mp, Ip (perna, em torno do proprio CoM),
-    l (CoM do corpo acima do quadril virtual), M, Im (meio corpo), mw, Iw (1 roda, inclui armature).
+    Returns L (wheel -> leg CoM), Lm (leg CoM -> hip), mp, Ip (leg, about its own CoM), l (body CoM above the
+    virtual hip), M, Im (half body), mw, Iw (one wheel, including the rotor armature).
     """
     data = mujoco.MjData(model)
     data.qpos[:] = model.qpos0
     data.qpos[0:3] = 0.0
-    data.qpos[3:7] = (1.0, 0.0, 0.0, 0.0)          # base sem rotacao: frame da base == mundo
+    data.qpos[3:7] = (1.0, 0.0, 0.0, 0.0)          # unrotated base: base frame == world
     pose_for_leg_length(mujoco, model, data, L0)
     bid = lambda n: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, n)
     side = "xp"
@@ -129,7 +87,7 @@ def leg_lqr_params(mujoco, model, L0):
     wc = data.site_xpos[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, f"wheel_center_{side}")].copy()
 
     def lump(names):
-        """massa, CoM (mundo) e inercia em torno de X pelo CoM do conjunto (so plano YZ importa)."""
+        """mass, CoM (world) and inertia about X through the group CoM (only the YZ plane matters)."""
         ms, cs, Ixx = 0.0, np.zeros(3), 0.0
         parts = []
         for n in names:
@@ -148,13 +106,13 @@ def leg_lqr_params(mujoco, model, L0):
         return ms, cs, Ixx
 
     mp, cp, Ip = lump([f"{n}_{side}" for n in LEG_BODIES])
-    # distancia ao longo do eixo da perna (roda -> quadril)
+    # distance along the leg axis (wheel -> hip)
     axis = (hip - wc)[1:]
     Lreal = float(np.linalg.norm(axis))
     u = axis / Lreal
     L = float(np.dot((cp - wc)[1:], u))
     L = min(max(L, 0.02), Lreal - 0.02)
-    # corpo = base + trens (meio robo)
+    # body = base + landing gear (half robot)
     Mb, cb, Ib = lump(["base", "gear_front", "gear_rear"])
     l = float(cb[2] - hip[2])
     wb = bid(f"wheel_{side}")
@@ -170,13 +128,13 @@ def leg_lqr_params(mujoco, model, L0):
 
 
 def stand_up(mujoco, model, data, controller, timeout=8.0):
-    """O robo nasce estacionado (keyframe "parked"). Roda o controlador parado ate ele levantar e
-    recolher o trem (modo "operating"), para os scripts medirem a partir daqui. Devolve o tempo [s]."""
+    """The robot starts parked: run the controller with a zero command until it has stood up and retracted the
+    landing gear (mode "operating"), so scripts measure from there. Returns the elapsed time [s]."""
     from repo_control_policy import Mode, RobotCommand
     t = 0.0
     while controller.mode != Mode.OPERATING:
         if t > timeout:
-            raise RuntimeError(f"o robo nao saiu do pouso em {timeout:.0f} s (modo {controller.mode})")
+            raise RuntimeError(f"the robot did not stand up within {timeout:.0f} s (mode {controller.mode})")
         controller.apply(data, RobotCommand())
         mujoco.mj_step(model, data)
         t += model.opt.timestep

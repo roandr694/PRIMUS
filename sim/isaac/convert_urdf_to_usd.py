@@ -1,6 +1,6 @@
 """Isaac Sim 6.1 conversion via Isaac Lab v3.0.0-EA; preserve imported layers."""
 from pathlib import Path
-from workspace import CACHE, RUN, receipt_path, physics_fingerprint
+from workspace import CACHE, STATE
 import sys
 import traceback
 
@@ -27,7 +27,7 @@ def main():
                 gains=UrdfConverterCfg.JointDriveCfg.PDGainsCfg(stiffness=0.0,damping=0.0)),
             run_multi_physics_conversion=False)
         converted=UrdfConverter(cfg)
-        for task in ('balance','terrain'): receipt_path(task).unlink(missing_ok=True)
+        for receipt in STATE.glob('smoke-*.json'): receipt.unlink()  # assets changed: physics checks are stale
         output=here/'usd/robo_bipedal.usd'
         if output.exists():
             import shutil

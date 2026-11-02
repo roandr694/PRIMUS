@@ -2,23 +2,38 @@
 
 **P**arallel-linkage **R**obot with **I**ntegrated **M**obility and **U**nderactuated **S**tabilization
 
-PRIMUS is a wheel-legged biped. Each leg is a closed-chain 5-bar linkage driven by two hip actuators, with a hub-driven wheel at the foot. The robot balances on its two wheels like an inverted pendulum and uses its legs to change ride height, level the body and absorb terrain.
-
-This repository holds the whole project, from CAD to simulation to the physical robot.
+PRIMUS is a wheel-legged biped. Each leg is a closed-chain 5-bar linkage driven by two hip actuators, with a
+hub-driven wheel at the foot. The robot balances on its two wheels like an inverted pendulum and uses its legs to
+change ride height, level the body and absorb terrain. This repository holds the whole project, from CAD to
+simulation to the physical robot.
 
 Demo (simulation, sensor-realistic state): [`docs/demo_arena.mp4`](docs/demo_arena.mp4)
 
-Control direction (model-based and RL, in Portuguese): [`docs/direcao_controle.md`](docs/direcao_controle.md).
+## Getting started
 
-## Repository layout
+```bash
+cd sim
+python3 -m pip install -r requirements.txt      # mujoco, numpy, scipy, pygame, aiohttp, pillow
+python3 scripts/check_model.py                  # load the model, stand up, balance 5 s, report loop closure
+python3 scripts/run_xbox_viewer.py              # drive it with a gamepad (macOS: mjpython ...)
+python3 scripts/run_quest_viewer.py             # or pilot it from a Meta Quest 3 over Wi-Fi (FPV + pilot panel)
+```
+
+The robot starts parked on its landing gear and stands up by itself. Everything else (scenes, analysis, video,
+regenerating from CAD) is in [`sim/README.md`](sim/README.md). GPU reinforcement learning:
+[`sim/warp_rl/README.md`](sim/warp_rl/README.md).
+
+## Where things are
 
 | folder | contents | status |
 |---|---|---|
-| [`hardware/`](hardware/) | mechanical and electrical design: CAD exports, bill of materials, wiring, assembly notes | to be filled |
-| [`sim/`](sim/) | MuJoCo model generated from the CAD (meshes, masses, closed 5-bar legs), test scenes, analysis tools; residual RL on GPU (MuJoCo Warp); URDF + Isaac Lab tasks with closed loops | MuJoCo + residual RL working; Isaac on hold |
-| [`control/`](control/) | balance and motion controller shared by simulation and the real robot: LQR gain-scheduled on leg length, virtual model control (VMC) through the closed-chain Jacobian, cascaded PIDs for yaw/roll/height, automatic landing gear | working in sim |
-| [`robot/`](robot/) | software for the physical robot: motor and IMU drivers, communication, state estimation, sim-to-real integration | to be filled |
-| [`docs/`](docs/) | technical notes, results, history of the earlier prototype model | |
+| [`control/`](control/) | the controller shared by simulation and robot: LQR scheduled on leg length, VMC through the closed-chain Jacobian, cascaded loops, automatic landing gear; LQR design and 5-bar kinematics | working in sim |
+| [`sim/`](sim/) | MuJoCo model generated from the CAD, scenes, pilot and analysis scripts, CAD → mesh pipeline | working |
+| [`sim/warp_rl/`](sim/warp_rl/) | residual RL on the GPU (MuJoCo Warp + PPO) on top of the model-based controller | working |
+| [`sim/isaac/`](sim/isaac/) | URDF → USD with closed loops for Isaac Sim (for the future perception work) | on hold |
+| [`hardware/`](hardware/) | actuator data and assumptions; CAD exports, BOM and wiring to come | partial |
+| [`robot/`](robot/) | software for the physical robot (drivers, estimation, sim-to-real) | to be filled |
+| [`docs/`](docs/) | [model and controller notes](docs/model_and_control.md), [control roadmap](docs/control_roadmap.md), [Isaac post-mortem](docs/terrain-run-2026-10-31.md), [workspace conventions](docs/workspace.md), history of the earlier prototype | |
 
 ## Robot at a glance
 
@@ -34,46 +49,24 @@ Control direction (model-based and RL, in Portuguese): [`docs/direcao_controle.m
 
 ## Highlights
 
-- **CAD → simulation pipeline.** Fusion 360 scripts export every body with its mass properties. `sim/tools` turns them into visual meshes, convex collision hulls (CoACD) and per-link inertias. MJCF and URDF are generated from that data.
-- **Closed kinematic chains in both simulators.** In MuJoCo, through equality constraints (loop error < 0.1 mm). In Isaac Sim, through extra joints excluded from the articulation tree.
-- **LQR re-derived from the real geometry.** The planar wheel-leg-body model is linearized at each leg length, using the actual leg center of mass and inertia from the 5-bar pose. The resulting gains are fit as cubic polynomials in leg length.
-- **Sensor-realistic state.** By default the controller sees only what the real robot can measure:
-  - wheel-encoder odometry, corrected for leg rotation;
-  - IMU attitude, either the fused output or Mahony from gyro + accelerometer, with optional noise and bias;
-  - ground contact estimated from hip motor torques.
-
-  Ground-truth simulator state stays available for comparison and for asymmetric actor-critic RL.
-
-## Quick start (simulation)
-
-```bash
-cd sim
-pip install -r requirements.txt
-python3 scripts/check_model.py          # load, balance 5 s, report loop closure
-mjpython scripts/run_xbox_viewer.py     # drive it with an Xbox controller (macOS: mjpython)
-```
-
-See [`sim/README.md`](sim/README.md) for everything else: scenes, analysis tools, the Isaac Sim workflow, and regenerating from CAD.
+- **CAD → simulation pipeline.** Fusion 360 scripts export every body with its mass properties; `sim/tools` turns
+  them into visual meshes, convex collision hulls (CoACD) and per-link inertias; MJCF and URDF are generated.
+- **Closed kinematic chains** in MuJoCo (equality constraints, loop error < 0.1 mm) and Isaac Sim (extra joints
+  excluded from the articulation tree).
+- **LQR re-derived from the real geometry**, linearised at each leg length with the actual leg CoM and inertia.
+- **Sensor-realistic state**: by default the controller sees only what the real robot measures (encoder
+  odometry corrected for leg rotation, IMU, contact estimated from hip torques).
+- **Residual RL**: a PPO policy adds per-leg corrections to the LQR; ~4× fewer falls and ~2× lower speed error
+  than the LQR alone on mixed terrain with pushes ([results](docs/control_roadmap.md)).
 
 ## Status
 
-- [x] CAD of the full robot
-- [x] robot built
-- [x] MuJoCo model from CAD + balance/drive controller
-- [x] Isaac Sim USD conversion and closed-loop PhysX smoke test validated on CPU and GPU
-- [ ] actuator characterization (peak torque, speed, rotor inertia); current values are placeholders
-- [ ] real-robot drivers and state estimation (`robot/`)
-- [ ] sim-to-real transfer of the controller
-- [x] Leg range 0.18–0.52 m with LQR re-derived over it; automatic landing gear (park / stand up / land)
-- [x] Residual RL on top of LQR + VMC, trained on GPU in MuJoCo Warp: ~4× fewer falls and ~2× lower speed error than LQR alone on mixed terrain ([sim/warp_rl](sim/warp_rl/README.md))
-- [ ] Large steps with perception (depth camera / elevation map), back in Isaac
-- [ ] Policy on the real robot
+- [x] CAD of the full robot; robot built
+- [x] MuJoCo model from CAD + balance/drive controller; leg range 0.18–0.52 m; automatic landing gear
+- [x] Residual RL on GPU (MuJoCo Warp); piloting with gamepad or Meta Quest 3
+- [x] Isaac Sim USD conversion with closed loops
+- [ ] actuator characterisation (peak torque, speed, rotor inertia); current values are placeholders
+- [ ] real-robot drivers and state estimation (`robot/`), sim-to-real of controller and policy
+- [ ] larger steps with perception (depth camera / elevation map), back in Isaac
 
-## Workspace and terrain experiments
-
-The Desktop workspace places this repository directly in `biped_project/PRIMUS`.
-Runs, videos, reports and caches live beside it; see [workspace conventions](docs/workspace.md).
-The experimental `Primus-Terrain-Direct` task adds flat ground, ramps, small stairs
-and uneven terrain, with tracked experiments and periodic training videos.
-See [the Isaac workflow](sim/isaac/README.md) for the GPU command, validation gates
-and current limitations. The first trained policy is a baseline with incomplete terrain mastery.
+The workspace around this repository (experiments, videos, caches) is described in [docs/workspace.md](docs/workspace.md).

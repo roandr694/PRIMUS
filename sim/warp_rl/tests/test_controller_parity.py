@@ -1,12 +1,12 @@
-"""Compara o controlador Warp (GPU) com o controlador numpy de control/ no MuJoCo de CPU.
+"""Compares the Warp (GPU) controller with the numpy controller from control/ on CPU MuJoCo.
 
-1. Malha aberta: a cada passo do MuJoCo (dirigido pelo numpy), os dois controladores recebem o mesmo
-   estado (mj_forward antes, para o sensordata do IMU do numpy nao ficar um passo atrasado em relacao
-   ao qpos que o Warp le); compara os torques. Rodas devem bater em < 1%. Quadris em < 3%: o comprimento
-   da perna analitico difere ~0.03 mm do simulado (o laco fechado do MuJoCo e levemente elastico) e o
-   integrador do PID de comprimento assenta num valor um pouco diferente (~0.1 N.m).
-2. Malha fechada: o controlador Warp dirige o MuJoCo de CPU no ciclo estacionado -> levanta -> anda ->
-   altura maxima/minima -> pousa; confere os modos e que nao cai.
+1. Open loop: at every MuJoCo step (driven by numpy) both controllers get the same state (mj_forward first,
+   so the numpy IMU sensordata is not one step behind the qpos Warp reads) and the torques are compared.
+   Wheels must match within 1%. Hips within 3%: the analytic leg length differs ~0.03 mm from the simulated
+   one (MuJoCo's loop closure is slightly compliant) and the leg-length PI integral settles slightly
+   differently (~0.1 N.m).
+2. Closed loop: the Warp controller drives CPU MuJoCo through parked -> stand up -> drive -> max/min height
+   -> land; checks the modes and that it does not fall.
 
     ~/test/isaac-rl/bin/python sim/warp_rl/tests/test_controller_parity.py
 """
@@ -37,7 +37,7 @@ def command_at(t):
 
 
 class WarpOnCpuData:
-    """Controlador Warp com nworld=1, lendo/escrevendo um MjData de CPU."""
+    """Warp controller with nworld=1, reading/writing a CPU MjData."""
 
     def __init__(self, model, device):
         self.model, self.device = model, device
@@ -81,11 +81,11 @@ def open_loop(device):
         mujoco.mj_step(model, data)
     diffs, mags = np.array(diffs)[:, :6], np.array(mags)[:, :6]
     rms_d = np.sqrt((diffs ** 2).mean(0)); rms_m = np.sqrt((mags ** 2).mean(0))
-    print("malha aberta: RMS do torque [N.m na junta] (referencia numpy | diferenca warp-numpy)")
+    print("open loop: torque RMS [N.m at the joint] (numpy reference | warp - numpy)")
     names = [mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_ACTUATOR, i) for i in range(6)]
     for n, a, b in zip(names, rms_m, rms_d):
         print(f"  {n:10s} {a:7.3f} | {b:7.4f}")
-    print(f"  passos com modo diferente: {mode_mismatch} de {len(diffs)}")
+    print(f"  steps with a different mode: {mode_mismatch} of {len(diffs)}")
     rel = rms_d / np.maximum(rms_m, 0.5)
     return float(rel[:4].max()), float(rel[4:].max()), mode_mismatch
 
@@ -111,8 +111,8 @@ def closed_loop(device):
         if abs(pitch) > 1.0 or data.qpos[2] < 0.15:
             fell = True
             break
-    print("malha fechada (warp dirige o MuJoCo de CPU):", transitions)
-    print(f"  pior |pitch| equilibrando {math.degrees(worst):.1f} graus; caiu: {fell}")
+    print("closed loop (warp drives CPU MuJoCo):", transitions)
+    print(f"  worst |pitch| while balancing {math.degrees(worst):.1f} deg; fell: {fell}")
     return transitions, fell
 
 
@@ -124,5 +124,5 @@ if __name__ == "__main__":
     modes = [m for _, m in trans]
     ok = (rel_hip < 0.03 and rel_wheel < 0.01 and mism < 50 and not fell
           and modes == ["parked", "standing_up", "operating", "landing", "parked"])
-    print(f"\npior diferenca relativa: quadris {rel_hip:.2%}, rodas {rel_wheel:.2%}  ->  {'PASSOU' if ok else 'FALHOU'}")
+    print(f"\nworst relative difference: hips {rel_hip:.2%}, wheels {rel_wheel:.2%}  ->  {'PASS' if ok else 'FAIL'}")
     sys.exit(0 if ok else 1)

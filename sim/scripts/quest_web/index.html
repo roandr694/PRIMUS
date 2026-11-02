@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PRIMUS pilot</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0d1117; color: #e6edf3; font: 15px/1.4 system-ui, sans-serif; }
+  header { display: flex; gap: 12px; align-items: center; padding: 10px 16px; flex-wrap: wrap; }
+  h1 { font-size: 18px; margin: 0 12px 0 0; }
+  button { font: inherit; font-weight: 600; padding: 10px 18px; border-radius: 8px; border: 0;
+           background: #2f81f7; color: white; cursor: pointer; }
+  button:disabled { background: #30363d; color: #8b949e; cursor: default; }
+  #status { color: #8b949e; }
+  main { display: flex; gap: 16px; padding: 0 16px 16px; flex-wrap: wrap; align-items: flex-start; }
+  #video { width: min(100%, 960px); aspect-ratio: 16/9; background: #000; border-radius: 8px; }
+  #panel { width: min(100%, 480px); border-radius: 8px; }
+  .help { color: #8b949e; padding: 0 16px 16px; }
+  kbd { background: #21262d; border-radius: 4px; padding: 1px 6px; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+<header>
+  <h1>PRIMUS · pilot</h1>
+  <button id="vr" disabled>Enter VR</button>
+  <span id="status">connecting…</span>
+</header>
+<main>
+  <canvas id="video" width="1280" height="720"></canvas>
+  <canvas id="panel" width="1024" height="1024"></canvas>
+</main>
+<p class="help">Keyboard (no headset): <kbd>W</kbd>/<kbd>S</kbd> speed · <kbd>A</kbd>/<kbd>D</kbd> turn ·
+  <kbd>E</kbd>/<kbd>Q</kbd> leg up/down · <kbd>space</kbd> brake · <kbd>P</kbd> land/stand up · <kbd>R</kbd> restart.<br>
+  Quest: left stick = speed, right stick = turn, triggers = height, A brake, B stop, X land/stand up,
+  Y restart, both grips = re-centre the screen.</p>
+
+<script type="module">
+import * as THREE from "three";
+
+const MODE = { parked: ["PARKED", "#8b949e"], standing_up: ["STANDING UP", "#d29922"],
+               operating: ["OPERATING", "#3fb950"], landing: ["LANDING", "#db6d28"] };
+const statusEl = document.getElementById("status");
+const vrBtn = document.getElementById("vr");
+const videoCanvas = document.getElementById("video");
+const vctx = videoCanvas.getContext("2d");
+const panelCanvas = document.getElementById("panel");
+const pctx = panelCanvas.getContext("2d");
+
+// ---------------------------------------------------------------- connection
+let ws, tel = {}, rtt = null, frames = 0, fps = 0, lastFpsT = performance.now(), decoding = false;
+function connect() {
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+  ws.binaryType = "blob";
+  ws.onopen = () => statusEl.textContent = "connected";
+  ws.onclose = () => { statusEl.textContent = "disconnected — retrying…"; setTimeout(connect, 1000); };
+  ws.onmessage = async (ev) => {
+    if (typeof ev.data !== "string") {
+      if (decoding) return;                 // drop the frame while the previous one is still decoding
+      decoding = true;
+      try {
+        const bmp = await createImageBitmap(ev.data);
+        vctx.drawImage(bmp, 0, 0, videoCanvas.width, videoCanvas.height);
+        bmp.close();
+        videoTex.needsUpdate = true;
+        frames++;
+      } finally { decoding = false; }
+      return;
+    }
+    const m = JSON.parse(ev.data);
+    if (m.type === "telemetry") tel = m;
+    else if (m.type === "pong") rtt = performance.now() - m.ts;
+  };
+}
+connect();
+setInterval(() => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "ping", ts: performance.now() })); }, 1000);
+
+// ---------------------------------------------------------------- inputs (logical, see sim/scripts/pilot.py)
+const keys = new Set();
+addEventListener("keydown", e => keys.add(e.code));
+addEventListener("keyup", e => keys.delete(e.code));
+let xrInput = null;      // filled every VR frame
+
+function keyboardInput() {
+  const k = c => keys.has(c) ? 1 : 0;
+  return { speed: k("KeyW") - k("KeyS"), yaw: k("KeyD") - k("KeyA"), up: k("KeyE"), down: k("KeyQ"),
+           brake: !!k("Space"), stop: false, park: !!k("KeyP"), reset: !!k("KeyR") };
+}
+setInterval(() => {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "input", ...(xrInput || keyboardInput()) }));
+}, 33);
+
+// ---------------------------------------------------------------- pilot panel
+function bar(x, y, w, h, frac, color, label, value) {
+  pctx.fillStyle = "#21262d"; pctx.fillRect(x, y, w, h);
+  pctx.fillStyle = color; pctx.fillRect(x, y, w * Math.max(0, Math.min(1, frac)), h);
+  pctx.fillStyle = "#e6edf3"; pctx.font = "600 26px system-ui"; pctx.fillText(label, x, y - 10);
+  pctx.textAlign = "right"; pctx.fillText(value, x + w, y - 10); pctx.textAlign = "left";
+}
+function drawPanel() {
+  const c = pctx, W = panelCanvas.width, H = panelCanvas.height;
+  c.clearRect(0, 0, W, H);
+  c.fillStyle = "rgba(13,17,23,0.92)"; c.beginPath(); c.roundRect(0, 0, W, H, 36); c.fill();
+  c.fillStyle = "#e6edf3"; c.font = "700 40px system-ui"; c.fillText("PRIMUS · pilot panel", 40, 70);
+  if (!tel.mode) { c.font = "28px system-ui"; c.fillText("waiting for the simulation…", 40, 140); return; }
+  // mode and landing gear
+  const [mname, mcol] = MODE[tel.mode] || [tel.mode, "#8b949e"];
+  c.fillStyle = mcol; c.beginPath(); c.roundRect(40, 100, 330, 64, 14); c.fill();
+  c.fillStyle = "#0d1117"; c.font = "800 34px system-ui"; c.fillText(mname, 60, 145);
+  c.fillStyle = "#e6edf3"; c.font = "600 28px system-ui";
+  c.fillText(`gear: ${tel.gear_down ? "DOWN" : "up"}`, 400, 132);
+  c.fillText(tel.park ? "request: LAND" : "request: operate", 400, 166);
+  // speed
+  c.font = "800 96px system-ui"; c.fillStyle = "#e6edf3";
+  c.fillText(tel.speed.toFixed(2), 40, 290);
+  c.font = "600 30px system-ui"; c.fillText("m/s", 300, 290);
+  c.fillStyle = "#8b949e"; c.fillText(`command ${tel.speed_cmd.toFixed(2)}  ·  target ${tel.speed_target.toFixed(2)}`, 40, 335);
+  c.fillText(`turn ${tel.yaw_rate.toFixed(2)} rad/s  (command ${tel.yaw_cmd.toFixed(2)})`, 40, 375);
+  if (tel.brake) { c.fillStyle = "#f85149"; c.font = "800 34px system-ui"; c.fillText("BRAKE", 380, 230); }
+  // artificial horizon (pitch/roll)
+  const cx = 800, cy = 270, r = 140;
+  c.save(); c.beginPath(); c.arc(cx, cy, r, 0, 2 * Math.PI); c.clip();
+  c.translate(cx, cy); c.rotate(-tel.roll * Math.PI / 180);
+  const py = tel.pitch * 4;
+  c.fillStyle = "#1f6feb"; c.fillRect(-r * 2, -r * 2 + py, r * 4, r * 2);
+  c.fillStyle = "#6e4b26"; c.fillRect(-r * 2, py, r * 4, r * 2);
+  c.strokeStyle = "white"; c.lineWidth = 3; c.beginPath(); c.moveTo(-r, py); c.lineTo(r, py); c.stroke();
+  c.restore();
+  c.strokeStyle = "#e6edf3"; c.lineWidth = 6; c.beginPath(); c.arc(cx, cy, r, 0, 2 * Math.PI); c.stroke();
+  c.strokeStyle = "#f2cc60"; c.beginPath(); c.moveTo(cx - 70, cy); c.lineTo(cx - 20, cy); c.moveTo(cx + 20, cy); c.lineTo(cx + 70, cy); c.stroke();
+  c.fillStyle = "#e6edf3"; c.font = "600 26px system-ui"; c.textAlign = "center";
+  c.fillText(`pitch ${tel.pitch.toFixed(1)}°   roll ${tel.roll.toFixed(1)}°`, cx, cy + r + 40); c.textAlign = "left";
+  // leg height
+  const lf = v => (v - tel.leg_min) / (tel.leg_max - tel.leg_min);
+  bar(40, 470, 600, 34, lf(tel.leg), "#58a6ff", "leg height", `${(tel.leg * 100).toFixed(0)} cm  (requested ${(tel.leg_cmd * 100).toFixed(0)})`);
+  c.fillStyle = "#f2cc60"; c.fillRect(40 + 600 * lf(tel.leg_cmd) - 3, 462, 6, 50);
+  // torques
+  bar(40, 580, 600, 30, tel.hip_torque / tel.torque_limit, tel.hip_torque > 0.9 * tel.torque_limit ? "#f85149" : "#3fb950",
+      "hip torque (max)", `${tel.hip_torque.toFixed(1)} / ${tel.torque_limit} N·m`);
+  bar(40, 680, 600, 30, tel.wheel_torque / tel.torque_limit, tel.wheel_torque > 0.9 * tel.torque_limit ? "#f85149" : "#3fb950",
+      "wheel torque (max)", `${tel.wheel_torque.toFixed(1)} / ${tel.torque_limit} N·m`);
+  // wheel contact
+  c.font = "600 28px system-ui"; c.fillStyle = "#e6edf3"; c.fillText("wheels on ground", 700, 500);
+  [["L", tel.contact_l], ["R", tel.contact_r]].forEach(([n, f], i) => {
+    c.fillStyle = f > 15 ? "#3fb950" : "#f85149"; c.beginPath(); c.arc(730 + i * 130, 555, 30, 0, 2 * Math.PI); c.fill();
+    c.fillStyle = "#e6edf3"; c.fillText(`${n} ${f.toFixed(0)} N`, 700 + i * 130, 625);
+  });
+  // footer: system
+  c.fillStyle = "#8b949e"; c.font = "26px system-ui";
+  c.fillText(`sim ${tel.t.toFixed(1)} s · real time ×${tel.rtf.toFixed(2)} · video ${fps} fps · ping ${rtt ? rtt.toFixed(0) : "–"} ms · falls ${tel.falls}`, 40, 790);
+  c.fillText(tel.pilot ? "controls: connected" : "controls: NO SIGNAL (robot stopped)", 40, 830);
+  c.fillText("A brake · B stop · X land/stand up · Y restart · triggers height", 40, 900);
+  c.fillText("both grips: re-centre the screen", 40, 940);
+  if (tel.fallen) {
+    c.fillStyle = "rgba(248,81,73,0.9)"; c.beginPath(); c.roundRect(560, 790, 420, 140, 20); c.fill();
+    c.fillStyle = "white"; c.font = "800 52px system-ui"; c.fillText("FALL", 700, 860);
+    c.font = "600 26px system-ui"; c.fillText("restarts by itself in 4 s", 615, 905);
+  }
+  panelTex.needsUpdate = true;
+}
+setInterval(() => {
+  drawPanel();
+  const now = performance.now();
+  if (now - lastFpsT > 1000) { fps = frames; frames = 0; lastFpsT = now; }
+}, 100);
+
+// ---------------------------------------------------------------- VR scene
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.xr.enabled = true;
+renderer.xr.setReferenceSpaceType("local-floor");
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0f14);
+const camera = new THREE.PerspectiveCamera(70, 1, 0.05, 100);
+scene.add(new THREE.GridHelper(20, 40, 0x30363d, 0x161b22));
+const videoTex = new THREE.CanvasTexture(videoCanvas);
+videoTex.colorSpace = THREE.SRGBColorSpace;
+const panelTex = new THREE.CanvasTexture(panelCanvas);
+panelTex.colorSpace = THREE.SRGBColorSpace;
+const rig = new THREE.Group();
+scene.add(rig);
+const screen = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 1.8),
+  new THREE.MeshBasicMaterial({ map: videoTex, toneMapped: false }));
+screen.position.set(0, 1.55, -2.4);
+rig.add(screen);
+const frame = new THREE.Mesh(new THREE.PlaneGeometry(3.28, 1.88), new THREE.MeshBasicMaterial({ color: 0x30363d }));
+frame.position.set(0, 1.55, -2.42);
+rig.add(frame);
+const panel = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.9),
+  new THREE.MeshBasicMaterial({ map: panelTex, transparent: true, toneMapped: false }));
+panel.position.set(-1.05, 0.95, -1.25);
+panel.rotation.set(-0.55, 0.55, 0.15);
+rig.add(panel);
+
+function recenter() {
+  const xrCam = renderer.xr.getCamera();
+  const pos = new THREE.Vector3(), dir = new THREE.Vector3();
+  xrCam.getWorldPosition(pos); xrCam.getWorldDirection(dir);
+  rig.position.set(pos.x, pos.y - 1.55, pos.z);
+  rig.rotation.set(0, Math.atan2(-dir.x, -dir.z), 0);
+}
+let gripHold = 0, centered = false;
+
+function readXRGamepads() {
+  const s = renderer.xr.getSession();
+  if (!s) return null;
+  const inp = { speed: 0, yaw: 0, up: 0, down: 0, brake: false, stop: false, park: false, reset: false };
+  let grips = 0;
+  for (const src of s.inputSources) {
+    const g = src.gamepad;
+    if (!g) continue;
+    const stickX = g.axes[2] ?? 0, stickY = g.axes[3] ?? 0;
+    const trig = g.buttons[0]?.value ?? 0, grip = g.buttons[1]?.value ?? 0;
+    const b4 = !!g.buttons[4]?.pressed, b5 = !!g.buttons[5]?.pressed;
+    if (grip > 0.8) grips++;
+    if (src.handedness === "left") { inp.speed = -stickY; inp.down = trig; inp.park = b4; inp.reset = b5; }
+    else { inp.yaw = stickX; inp.up = trig; inp.brake = b4; inp.stop = b5; }
+  }
+  gripHold = grips === 2 ? gripHold + 1 : 0;
+  if (gripHold === 20) recenter();
+  return inp;
+}
+
+renderer.setAnimationLoop(() => {
+  if (renderer.xr.isPresenting) {
+    if (!centered) { recenter(); centered = true; }
+    xrInput = readXRGamepads();
+    renderer.render(scene, camera);
+  }
+});
+
+if (navigator.xr) {
+  navigator.xr.isSessionSupported("immersive-vr").then(ok => {
+    vrBtn.disabled = !ok;
+    if (!ok) vrBtn.textContent = "VR not available in this browser";
+  });
+} else {
+  vrBtn.textContent = location.protocol === "https:" ? "VR not available in this browser" : "VR needs HTTPS";
+}
+vrBtn.onclick = async () => {
+  const session = await navigator.xr.requestSession("immersive-vr", { optionalFeatures: ["local-floor"] });
+  document.body.appendChild(renderer.domElement);
+  await renderer.xr.setSession(session);
+  centered = false;
+  session.addEventListener("end", () => { xrInput = null; renderer.domElement.remove(); });
+};
+</script>
+</body>
+</html>

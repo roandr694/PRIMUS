@@ -1,13 +1,11 @@
-"""Cinematica analitica da perna 5 barras (plano YZ da base: Y frente, Z cima), sem simulador.
+"""Analytic kinematics of the closed 5-bar leg (base YZ plane: Y forward, Z up), no simulator needed.
 
-Geometria de sim/tools/robot_def.py (pose do CAD = todos os angulos zero). Cada perna:
-quadril Y+ e quadril Y- na base (140 mm), bracos de 220 mm, barras inferiores de 350 mm que se
-encontram no eixo da roda. hip_Yp gira o braco da frente, hip_Ym o de tras, ambos em +X.
+Geometry from sim/tools/robot_def.py (CAD pose = all angles zero). Each leg: hip Y+ and hip Y- on the base
+(140 mm apart), 220 mm arms, 350 mm lower bars meeting at the wheel axle. hip_Yp turns the front arm,
+hip_Ym the rear one, both about +X.
 
-Usado por:
-  * sim/scripts/robot_model.py: pose de cada L0 para o lqr_design.py (sem o Newton do MuJoCo, que
-    pula para o outro ramo do mecanismo com a perna mais esticada que a pose do CAD);
-  * o controlador vetorizado do treino em GPU (mesmas equacoes, em torch).
+Used by the LQR design (pose for each L0), the MJCF generator (parked keyframe), the Isaac asset and the
+GPU controller in sim/warp_rl (same equations in Warp).
 """
 import math
 import sys
@@ -16,13 +14,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "sim" / "tools"))
 from robot_def import LEGS  # noqa: E402
 
-# Faixa geometrica medida com as malhas de colisao (perna simetrica, trem recolhido):
-# abaixo de ~0.17 m a roda bate no chassi; 0.565 m e a perna toda esticada (singular).
+# Geometric range measured with the collision meshes (symmetric legs, gear retracted): below ~0.17 m the
+# wheel hits the chassis; 0.565 m is the fully extended (singular) leg.
 GEOMETRIC_LENGTH_RANGE = (0.17, 0.565)
 
 
 def leg_points(side):
-    """Pontos do CAD da perna `side` no plano (y, z) [m]."""
+    """CAD points of leg `side` in the (y, z) plane [m]."""
     return {k: (v[1] / 1000.0, v[2] / 1000.0) for k, v in LEGS[side].items()}
 
 
@@ -44,10 +42,10 @@ def _wrap(a):
 
 
 def closure(side, hip_p, hip_m):
-    """Fecha o 5 barras para os angulos dos quadris [rad].
+    """Closes the 5-bar for the hip angles [rad].
 
-    Retorna (knee_Yp, knee_Ym, foot) com os angulos dos joelhos passivos [rad] e o eixo da roda (y, z)
-    no frame do CAD, ou None se o laco nao fecha. Escolhe o ramo com a roda para baixo."""
+    Returns (knee_Yp, knee_Ym, foot): passive knee angles [rad] and the wheel axle (y, z) in the CAD frame,
+    or None if the loop cannot close. Picks the branch with the wheel below."""
     P = leg_points(side)
     hp, hm = P["hipYp"], P["hipYm"]
     kp = tuple(x + y for x, y in zip(hp, _rot(_sub(P["kneeYp"], hp), hip_p)))
@@ -81,11 +79,11 @@ def leg_length(side, hip_p, hip_m):
 
 
 def symmetric_angle_for_length(side, length):
-    """Angulo `a` (hip_Yp = +a, hip_Ym = -a) que da o comprimento `length`. L0 cai monotonamente com `a`
-    em [-55, 90] graus; a = 0 e a pose do CAD (0.394 m)."""
+    """Angle `a` (hip_Yp = +a, hip_Ym = -a) giving leg length `length`. L0 decreases monotonically with `a`
+    in [-55, 90] deg; a = 0 is the CAD pose (0.394 m)."""
     lo, hi = math.radians(-55.0), math.radians(90.0)
     if not leg_length(side, hi, -hi) <= length <= leg_length(side, lo, -lo):
-        raise ValueError(f"L0 = {length:.3f} m fora da faixa do mecanismo")
+        raise ValueError(f"L0 = {length:.3f} m outside the mechanism range")
     for _ in range(60):
         a = 0.5 * (lo + hi)
         if leg_length(side, a, -a) > length:
@@ -93,3 +91,19 @@ def symmetric_angle_for_length(side, length):
         else:
             hi = a
     return 0.5 * (lo + hi)
+
+
+def nominal_pose(length, wheel_radius=0.1075, clearance=0.002):
+    """Both legs at `length` [m]: ({joint name: angle [rad]} for hips, knees and wheels, base height [m]
+    above flat ground with the tires `clearance` above it)."""
+    lo, hi = GEOMETRIC_LENGTH_RANGE
+    if not lo <= length <= hi:
+        raise ValueError(f"leg length {length:.3f} m outside the mechanism range [{lo}, {hi}] m")
+    q, foot_z = {}, []
+    for side in LEGS:
+        a = symmetric_angle_for_length(side, length)
+        knee_p, knee_m, foot = closure(side, a, -a)
+        q.update({f"hip_Yp_{side}": a, f"hip_Ym_{side}": -a, f"knee_Yp_{side}": knee_p,
+                  f"knee_Ym_{side}": knee_m, f"wheel_{side}": 0.0})
+        foot_z.append(foot[1])
+    return q, wheel_radius + clearance - min(foot_z)

@@ -1,123 +1,97 @@
-# PRIMUS — simulação (MuJoCo + Isaac Sim)
+# PRIMUS — simulation
 
-Simulação do robô a partir da montagem **"Robo bipedal - montagem principal"** do Fusion: malhas, massas e inércias do CAD, pernas 5 barras fechadas, atuadores 9:1. O controlador (LQR + VMC + PIDs em cascata, estrutura do `Skythinker616/foc-wheel-legged-robot`) fica em [`../control/`](../control/), compartilhado com o robô real; por padrão ele usa **só o que o robô real mede** (IMU, encoders e torque dos motores).
+MuJoCo model of the robot generated from the Fusion assembly **"Robo bipedal - montagem principal"**: CAD meshes,
+masses and inertias, closed 5-bar legs, 9:1 actuators. The controller (LQR + VMC + cascaded loops + automatic
+landing gear) lives in [`../control/`](../control/) and is shared with the real robot; by default it uses **only
+what the real robot measures** (IMU, encoders, motor torques).
 
-Todos os comandos abaixo rodam **de dentro de `sim/`**.
+All commands run **from `sim/`**. Install once with `python3 -m pip install -r requirements.txt`
+(macOS: run the viewers with `mjpython` instead of `python3`).
 
-## Estrutura
+## Drive the robot
+
+The robot starts **parked** (legs at 0.18 m, resting on its landing gear) and stands up by itself: it raises the
+legs, retracts the gear once still, and then follows the commands. "Land" makes it stop, lower the gear and
+descend onto it. Leg height goes from 0.18 to 0.52 m.
+
+```bash
+python3 scripts/run_viewer.py [--flat]          # viewer, zero command
+python3 scripts/run_xbox_viewer.py [--flat]     # Xbox / SDL gamepad
+python3 scripts/run_quest_viewer.py [--flat]    # Meta Quest 3 over Wi-Fi
+```
+
+| action | Xbox | Meta Quest 3 | keyboard (Quest page in a desktop browser) |
+|---|---|---|---|
+| speed (up to 1.5 m/s) | left stick Y | left stick | W / S |
+| turn | right stick X | right stick | A / D |
+| leg height (latches) | triggers or D-pad | triggers | E / Q |
+| hard brake | B | A | space |
+| soft stop | A | B | – |
+| land ↔ stand up | X | X | P |
+| restart | Start | Y | R |
+
+If your gamepad maps differently, find the indices with `python3 scripts/inspect_gamepad.py` and pass them to
+`run_xbox_viewer.py` (`--speed-axis`, `--brake-button`, ...).
+
+**Meta Quest 3.** `run_quest_viewer.py` prints `https://<computer-ip>:8443`. On the Quest, on the same Wi-Fi, open
+it in the browser, accept the self-signed certificate warning (Advanced → proceed) and tap **Enter VR**. You get a
+large screen with the robot's first-person camera (chase camera in the corner) and a pilot panel (mode, gear,
+speed, turn rate, artificial horizon, leg height, torques, wheel contact, falls, real-time factor, ping). Both
+grips re-centre the screen. Without headset input for 0.5 s the robot stops; after a fall the simulation
+restarts by itself in 4 s. Needs `aiohttp`, `pillow` and the system `openssl`; on macOS allow incoming
+connections for Python if the firewall asks. Lower `--width/--height/--quality` if the Wi-Fi struggles.
+
+## Measure
+
+```bash
+python3 scripts/check_model.py --flat                                   # joints, actuators, 5 s balance, loop gap
+python3 scripts/analyze_balance.py --flat --speed 0.6 --yaw 1.5         # swing, bounce, contact, torque, drift
+python3 scripts/analyze_balance.py --speed 0.5 --yaw 0.3 --height-amplitude 0.03   # arena, leg going up/down
+python3 scripts/analyze_balance.py --flat --imu mahony --imu-noise      # realistic IMU
+python3 scripts/analyze_balance.py --flat --state sim                   # simulator ground truth instead of sensors
+python3 scripts/analyze_balance.py --flat --log 0.25                    # trajectory log for tuning
+python3 scripts/record_video.py ../docs/demo_arena.mp4                  # headless mp4 (needs ffmpeg)
+```
+
+`--state robot` (default) uses only real-robot signals: IMU (`imu_quat`, `imu_gyro`, `imu_acc`), wheel-encoder
+odometry corrected by the shin rotation, and contact estimated from hip torques. `--state sim` uses the true
+wheel-centre velocity and tire forces (for comparison, or as the privileged critic in RL). See
+[`../docs/model_and_control.md`](../docs/model_and_control.md).
+
+## Layout
 
 ```text
-models/robo_bipedal.xml                 robô (GERADO): corpos, juntas, laços, atuadores, sensores
-models/cena_arena.xml                   cena "arena": terreno, rampa, escada, pisos, lombadas, pedras
-models/cena_plana.xml                   cena plana (para medir o controle)
-models/meshes/                          malhas visuais e de colisão (do CAD)
-models/cad/                             massas, inércias e listas de malhas exportadas do CAD
-models/assets/terrain_heightmap.png     relevo da arena
-../control/repo_control_policy.py       controlador (LQR + VMC + PIDs) + IMU simulada
-../control/lqr_design.py                recalcula os ganhos do LQR a partir do MJCF
-../control/lqr_gains.py                 tabela de ganhos (GERADA)
-scripts/robot_model.py                  carregar modelo/keyframe, cinemática da perna, parâmetros do LQR, stand_up()
-../control/five_bar.py                  cinemática analítica do 5 barras
-warp_rl/                                RL residual em GPU (MuJoCo Warp + RSL-RL)
-scripts/generate_mjcf.py                gera os 3 XML a partir de models/cad + tools/robot_def.py
-scripts/generate_urdf.py                gera isaac/urdf/robo_bipedal.urdf + models/cad/loop_closures.json
-isaac/                                  URDF + scripts do Isaac Sim / Isaac Lab (laços fechados no USD)
-scripts/run_viewer.py                   viewer com comando zero
-scripts/run_xbox_viewer.py              viewer controlado pelo controle de Xbox
-scripts/xbox_controller.py, inspect_gamepad.py
-scripts/check_model.py                  carrega, lista juntas/atuadores, equilibra 5 s, mede o laço
-scripts/drive_demo.py                   demo headless andando
-scripts/diagnose.py                     log de trajetória para ajuste
-scripts/analyze_balance.py              métricas de balanço (pitch, quique, contato, torque, deriva)
-scripts/record_video.py                 grava um mp4 headless na arena
-tools/                                  pipeline CAD → malhas/massas (scripts do Fusion + build_assets.py)
-../docs/notas_modelo_controle.md                  modelo, convenções, controle, o que é provisório
-../docs/demo_arena.mp4                  vídeo de validação
+models/robo_bipedal.xml        robot (GENERATED): bodies, joints, loops, actuators, sensors, keyframes
+models/cena_arena.xml          "arena" scene: terrain, ramp, stairs, floor patches, bumps, rocks
+models/cena_plana.xml          flat scene (to measure the controller)
+models/meshes/, models/cad/    visual/collision meshes and mass properties from the CAD
+scripts/robot_model.py         load a scene, leg pose for a length, LQR model parameters, stand_up()
+scripts/pilot.py               gamepad/Quest/keyboard inputs -> RobotCommand (shared by the pilot scripts)
+scripts/run_viewer.py, run_xbox_viewer.py, run_quest_viewer.py (+ quest_web/), inspect_gamepad.py
+scripts/check_model.py, analyze_balance.py, record_video.py
+scripts/generate_mjcf.py       writes the 3 XML files from models/cad + tools/robot_def.py
+scripts/generate_urdf.py       writes isaac/urdf/robo_bipedal.urdf + models/cad/loop_closures.json
+tools/                         CAD -> meshes/masses pipeline (Fusion scripts + build_assets.py)
+warp_rl/                       residual RL on the GPU (MuJoCo Warp + RSL-RL)
+isaac/                         URDF -> USD with closed loops, for Isaac Sim (on hold)
 ```
 
-## Rodar
+## Regenerate
 
-Use o env conda `bipedal`, como antes:
-
-```bash
-cd ~/Desktop/primus/sim
-conda run -n bipedal python3 -m pip install -r requirements.txt    # se faltar algo
-
-conda run -n bipedal python3 scripts/check_model.py               # teste rápido
-conda run -n bipedal mjpython scripts/run_viewer.py               # viewer (macOS: mjpython)
-conda run -n bipedal mjpython scripts/run_xbox_viewer.py          # com o controle de Xbox
-conda run -n bipedal mjpython scripts/run_xbox_viewer.py --flat   # chão plano
-```
-
-### Controle de Xbox
-
-| entrada | ação |
-|---|---|
-| analógico esquerdo, eixo Y | velocidade (até 1,5 m/s; ajuste com `--max-speed`) |
-| analógico direito, eixo X | taxa de giro (yaw) |
-| D-pad ↑/↓ ou gatilhos | altura; **trava** no valor. Perna de 0,18 a 0,52 m (nominal 0,27) |
-| A | parada suave |
-| B | freio forte |
-| X | pousar ↔ levantar (o trem de pouso abre e fecha sozinho) |
-| Start | reseta alvos e altura |
-
-Se o mapeamento for diferente: `python3 scripts/inspect_gamepad.py`.
-
-O robô nasce **estacionado** (perna em 0,18 m, trem abaixado, keyframe `parked`) e levanta sozinho:
-sobe a perna, recolhe o trem quando está parado e só então obedece ao controle. O X pede para pousar:
-ele para, abaixa o trem e desce até apoiar. Os scripts de medição (`check_model`, `analyze_balance`,
-`drive_demo`, `diagnose`) esperam o robô levantar antes de medir.
-
-### Medir
-
-```bash
-conda run -n bipedal python3 scripts/analyze_balance.py --flat --speed 0.6 --yaw 1.5
-conda run -n bipedal python3 scripts/analyze_balance.py --speed 0.4 --yaw 1.0            # arena
-conda run -n bipedal python3 scripts/analyze_balance.py --flat --imu mahony --imu-noise  # IMU realista
-conda run -n bipedal python3 scripts/drive_demo.py --seconds 6 --target-speed 0.5 --yaw 0.3
-conda run -n bipedal python3 scripts/record_video.py ../docs/demo_arena.mp4                 # precisa de ffmpeg
-```
-
-## Estado do robô: sensores do robô real (padrão) ou estado do simulador
-
-`RepoControlPolicy(..., state_source="robot")` é o padrão e usa só o que o robô de verdade tem:
-
-| grandeza | de onde vem |
-|---|---|
-| pitch, roll, yaw e taxas | IMU simulada: sensores `imu_quat`, `imu_gyro`, `imu_acc` no lugar do WitMotion |
-| x, dx (para frente) | encoders das rodas, **corrigidos pelo giro da canela** (giro da base no IMU + cinemática dos quadris). O projeto antigo usava só a média dos encoders, o que mistura o balanço da perna com a velocidade |
-| roda no chão | força normal **estimada** pelo torque dos motores do quadril + aceleração da roda (como no firmware de referência) |
-| geometria da perna | cinemática dos quadris (= encoders) |
-
-Com `state_source="sim"` (ou `--state sim` nos scripts) o controlador usa a velocidade real do centro das rodas e a força real em cada pneu. Serve para comparar e como observação privilegiada do *critic* no RL (o *actor* deve ver só o que o robô tem).
-
-Para sensores mais realistas, `ImuConfig` tem ruído e bias de giro e o modo `mahony`, que estima a atitude só com giro e acelerômetro. Veja `../docs/notas_modelo_controle.md`.
-
-## RL residual em GPU (MuJoCo Warp)
-
-O treino de RL atual roda no MuJoCo Warp, com o mesmo modelo e o mesmo controlador, e soma um residual
-ao LQR + VMC. Veja [warp_rl/README.md](warp_rl/README.md).
-
-## Isaac Sim / primeiro teste de RL
-
-O fluxo atualizado para Isaac Sim 6.1 e Isaac Lab v3.0.0-EA está em [isaac/README.md](isaac/README.md). Inclui diagnóstico do runtime compartilhado, conversão URDF → USD com fechamento dos laços, teste físico e tarefa inicial de equilíbrio com PPO. A conversão real, o teste PhysX com dois robôs e um PPO de 20 iterações foram executados em CPU. O primeiro treino de terreno em GPU (torque bruto) não aprendeu a equilibrar; veja o [post-mortem](../docs/terrain-run-2026-10-31.md). O RL atual é o residual em [warp_rl/](warp_rl/README.md).
-
-## Regenerar
-
-Se mudar algum parâmetro de atuador (o topo de `scripts/generate_mjcf.py`):
+After changing an actuator parameter (top of `scripts/generate_mjcf.py`) or masses:
 
 ```bash
 python3 scripts/generate_mjcf.py
-python3 ../control/lqr_design.py --write     # massas/inércias mudaram? recalcula o LQR
+python3 ../control/lqr_design.py --write
 ```
 
-Se o CAD mudar:
+After a CAD change:
 
-1. No Fusion, rode `tools/fusion/fusion_1_classificar_corpos.py` e `fusion_2_exportar_malhas.py`. Eles exportam os STL brutos para `~/Desktop/robo_sim_export/raw` (pasta temporária; pode apagar depois do passo 2).
-2. Depois:
+1. In Fusion, run `tools/fusion/fusion_1_classificar_corpos.py` and `fusion_2_exportar_malhas.py`. They export the
+   raw STL files to `~/Desktop/robo_sim_export/raw` (temporary; delete after step 2).
+2. Then:
    ```bash
-   pip install trimesh fast-simplification coacd
-   RAW=~/Desktop/robo_sim_export/raw python3 tools/build_assets.py        # escreve models/meshes e models/cad
+   python3 -m pip install trimesh fast-simplification coacd
+   RAW=~/Desktop/robo_sim_export/raw python3 tools/build_assets.py       # writes models/meshes and models/cad
    python3 scripts/generate_mjcf.py && python3 scripts/generate_urdf.py && python3 ../control/lqr_design.py --write
    ```
-

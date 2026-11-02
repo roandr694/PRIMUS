@@ -33,8 +33,10 @@ def check_assets():
     for loop in loops:
         if loop['body0'] not in links or loop['body1'] not in links: errors.append('Unknown loop link: '+loop['name'])
         if loop['axis']!='X': errors.append('Unexpected loop axis')
-    from kinematics import nominal_pose
-    q,z = nominal_pose()
+    sys.path.insert(0,str(HERE.parents[1]/'control'))
+    from five_bar import nominal_pose
+    q,z = nominal_pose(0.27)
+    q.update(gear_front=0.0,gear_rear=0.0)
     if set(q)!=joints: errors.append('Nominal pose does not cover exactly the URDF joints')
     if not all(math.isfinite(x) for x in [*q.values(),z]): errors.append('Nonfinite reset pose')
     return {'links':len(links),'joints':len(joints),'loops':len(loops),'mass_kg':mass,'base_height_m':z,'errors':errors}
@@ -45,8 +47,8 @@ def version(name):
     except metadata.PackageNotFoundError: return None
 
 
-def inspect_runtime(device='cuda:0', video=False):
-    packages = {n:version(n) for n in ['isaacsim','isaaclab','isaaclab-physx','isaaclab-rl','rsl-rl-lib','torch','gymnasium','moviepy','imageio-ffmpeg']}
+def inspect_runtime(device='cuda:0'):
+    packages = {n:version(n) for n in ['isaacsim','isaaclab','isaaclab-physx','isaaclab-rl','rsl-rl-lib','torch','gymnasium']}
     report = {'python':sys.executable,'python_version':sys.version.split()[0],'device':device,'packages':packages,'assets':check_assets()}
     lab_root = os.environ.get('ISAACLAB_PATH')
     report['isaaclab_path'] = lab_root
@@ -68,15 +70,13 @@ def inspect_runtime(device='cuda:0', video=False):
         if importlib.util.find_spec(n) is None: errors.append('Missing Python module: '+n)
     if device.startswith('cuda') and not report['cuda_available']: errors.append('CUDA unavailable in this process; check device visibility outside the sandbox, or explicitly select --device cpu')
     if report['isaaclab_tag']!='v3.0.0-EA': errors.append('Set ISAACLAB_PATH to the v3.0.0-EA checkout for Sim 6.1')
-    if video and (not packages['moviepy'] or packages['moviepy'].split('.')[0]!='1' or not packages['imageio-ffmpeg']):
-        errors.append('Video dependencies missing or incompatible. Run from PRIMUS: python3 -m pip --python '+str(Path.home()/'test/isaac-rl/bin/python')+' install -r sim/isaac/requirements-video.txt')
     report['errors'] = errors
     return report
 
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser(); p.add_argument('--assets-only',action='store_true'); p.add_argument('--output',type=Path); p.add_argument('--video',action='store_true'); p.add_argument('--device',default='cuda:0',choices=['cpu','cuda:0']); args=p.parse_args()
-    result = check_assets() if args.assets_only else inspect_runtime(args.device, video=args.video)
+    p=argparse.ArgumentParser(); p.add_argument('--assets-only',action='store_true'); p.add_argument('--output',type=Path); p.add_argument('--device',default='cuda:0',choices=['cpu','cuda:0']); args=p.parse_args()
+    result = check_assets() if args.assets_only else inspect_runtime(args.device)
     output=json.dumps(result,indent=2)
     print(output)
     if args.output: args.output.parent.mkdir(parents=True,exist_ok=True); args.output.write_text(output+'\n')

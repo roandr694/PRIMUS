@@ -1,10 +1,10 @@
-"""Treina a politica residual em GPU (MuJoCo Warp + RSL-RL PPO).
+"""Trains the residual policy on the GPU (MuJoCo Warp + RSL-RL PPO).
 
     ~/test/isaac-rl/bin/python sim/warp_rl/train.py --num-envs 4096 --iterations 1500
 
-Cada execucao cria experiments/<data>-warp-residual/ no workspace (ou em $PRIMUS_WORKSPACE): manifesto
-(argumentos, revisao do Git, diff), checkpoints e TensorBoard em logs/. Ao final roda a avaliacao
-(eval.py: controlador base sozinho x base + residual) e grava um video (render.py).
+Each run creates experiments/<date>-warp-residual/ in the workspace (or in $PRIMUS_WORKSPACE): manifest
+(arguments, Git revision, diff), checkpoints and TensorBoard in logs/. At the end it runs the evaluation
+(eval.py: model-based alone vs model-based + residual) and records the videos (render.py).
 """
 import argparse
 import copy
@@ -80,7 +80,7 @@ def main():
     torch.manual_seed(args.seed)
     env = PrimusWarpEnv(cfg, device=args.device, seed=args.seed)
     runner = OnPolicyRunner(env, copy.deepcopy(ppo), log_dir=str(run / "logs"), device=args.device)
-    # comeca exatamente do controlador model-based: media do residual = 0 (so o ruido de exploracao)
+    # start exactly from the model-based controller: residual mean = 0 (only the exploration noise)
     head = [m for m in runner.alg.actor.mlp if isinstance(m, torch.nn.Linear)][-1]
     with torch.no_grad():
         head.weight[:env.num_actions].zero_()

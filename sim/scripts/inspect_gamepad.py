@@ -1,3 +1,4 @@
+"""Prints live pygame joystick axes/buttons, to find the indices for run_xbox_viewer.py."""
 import argparse
 import os
 import time
@@ -9,13 +10,8 @@ def main():
     parser.add_argument("--rate", type=float, default=5.0)
     args = parser.parse_args()
 
-    try:
-        os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
-        import pygame
-    except ModuleNotFoundError:
-        print("pygame is not installed. Run:")
-        print("  conda run -n bipedal python3 -m pip install pygame")
-        raise SystemExit(1)
+    os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+    import pygame
 
     pygame.joystick.init()
     count = pygame.joystick.get_count()

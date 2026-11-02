@@ -1,8 +1,7 @@
-"""Grava um video headless (mp4) do robo na arena com o controlador: equilibra, muda de altura, anda,
-vira, sobe e desce a rampa. Precisa de ffmpeg no PATH.
+"""Records a headless mp4 of the robot in the arena with the controller: stands up, changes height, drives,
+turns, goes up and down the ramp. Needs ffmpeg on PATH.
 
-    conda run -n bipedal python3 scripts/record_video.py docs/demo_arena.mp4
-    (Linux sem tela:  MUJOCO_GL=egl  ou  MUJOCO_GL=osmesa)
+    python3 scripts/record_video.py docs/demo_arena.mp4        # Linux without a display: MUJOCO_GL=egl
 """
 import argparse
 import math
@@ -10,17 +9,16 @@ import subprocess
 
 import numpy as np
 
-import _paths  # noqa: F401  (control/ no sys.path)
 import robot_model as rm
 from repo_control_policy import RepoControlPolicy, RobotCommand, body_rpy
 
-# (t_inicio, comando). O robo nasce olhando para +X do mundo, de frente para a rampa.
+# (start time, command). The robot starts parked facing world +X, towards the ramp.
 SCRIPT = [
     (0.0, dict()),
     (2.0, dict(leg_length=0.20)),
     (4.0, dict(leg_length=0.34)),
     (6.0, dict()),
-    (7.0, dict(speed_cmd=0.7)),                       # rampa: sobe, plataforma, desce
+    (7.0, dict(speed_cmd=0.7)),                       # ramp: up, platform, down
     (17.0, dict(speed_cmd=0.0)),
     (18.5, dict(yaw_speed_cmd=1.5)),
     (20.6, dict(speed_cmd=0.8, yaw_speed_cmd=0.6)),
@@ -74,7 +72,7 @@ def main():
     renderer.close()
     ff.stdin.close()
     ff.wait()
-    print(f"video: {args.out}  ({T:.0f} s)  {'caiu em t=%.1f s' % fell if fell else 'sem queda'}")
+    print(f"video: {args.out}  ({T:.0f} s)  {'fell at t=%.1f s' % fell if fell else 'no fall'}")
 
 
 if __name__ == "__main__":

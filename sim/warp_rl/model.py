@@ -1,13 +1,14 @@
-"""Modelo MuJoCo para treino em GPU (MuJoCo Warp): o mesmo robo de models/robo_bipedal.xml, com
-colisao simplificada e um terreno grande compartilhado por todos os robos.
+"""MuJoCo model for GPU training (MuJoCo Warp): the robot of models/robo_bipedal.xml with simplified
+collision, on one large terrain shared by all robots.
 
-Inercias, juntas, lacos fechados, atuadores e sensores sao os do MJCF gerado do CAD. Muda so a colisao:
-  * pneus: os mesmos cilindros exatos;
-  * trens de pouso: uma esfera na ponta de cada um (apoio do robo estacionado);
-  * (collision="full") chassi como caixa e pernas como capsulas no eixo principal das cascas.
-As ~70 cascas convexas geram ~20 contatos por robo e deixam o MuJoCo Warp lento. Contra o heightfield,
-cada peca e testada com todas as celulas embaixo dela, entao o treino usa collision="minimal" (pneus +
-pontas do trem): a queda e detectada pela geometria (inclinacao/altura) e o episodio termina ali.
+Inertias, joints, closed loops, actuators and sensors are those of the CAD-generated MJCF. Only collision
+changes:
+  * tires: the same exact cylinders;
+  * landing gear: one sphere at each tip (what the parked robot rests on);
+  * (collision="full") chassis as a box and legs as capsules along the main axis of their hulls.
+The ~70 convex hulls make ~20 contacts per robot and slow MuJoCo Warp down; against the heightfield every
+part is tested with every cell below it, so training uses collision="minimal" (tires + gear tips): falls
+are detected from the geometry (tilt/height) and end the episode.
 """
 from pathlib import Path
 
@@ -21,7 +22,7 @@ COLLISION_GROUP = 3
 
 
 def _body_hull_vertices(model):
-    """Vertices das cascas de colisao de cada corpo, no frame do corpo."""
+    """Collision hull vertices of each body, in the body frame."""
     out = {}
     for g in range(model.ngeom):
         if model.geom_group[g] != COLLISION_GROUP or model.geom_type[g] != mujoco.mjtGeom.mjGEOM_MESH:
@@ -36,7 +37,7 @@ def _body_hull_vertices(model):
 
 
 def _capsule(v, radius_percentile=85.0):
-    """Capsula no eixo principal (PCA) dos vertices: (ponto0, ponto1, raio)."""
+    """Capsule along the principal (PCA) axis of the vertices: (point0, point1, radius)."""
     c = v.mean(0)
     axis = np.linalg.svd(v - c, full_matrices=False)[2][0]
     t = (v - c) @ axis
@@ -49,7 +50,7 @@ def _capsule(v, radius_percentile=85.0):
 
 
 def robot_spec(collision="minimal"):
-    """MjSpec do robo com a colisao simplificada ("minimal": pneus + pontas do trem; "full": + chassi e pernas)."""
+    """Robot MjSpec with simplified collision ("minimal": tires + gear tips; "full": + chassis and legs)."""
     source = mujoco.MjModel.from_xml_path(str(ROBOT_XML))
     verts = _body_hull_vertices(source)
     spec = mujoco.MjSpec.from_file(str(ROBOT_XML))
@@ -64,7 +65,7 @@ def robot_spec(collision="minimal"):
                       friction=[0.8, 0.02, 0.002], rgba=[0.8, 0.3, 0.3, 0.4])
         if body.name.startswith("gear"):
             p0, p1, r = _capsule(v)
-            tip = p0 if np.linalg.norm(p0) > np.linalg.norm(p1) else p1      # ponta = longe da dobradica
+            tip = p0 if np.linalg.norm(p0) > np.linalg.norm(p1) else p1      # tip = far from the hinge
             body.add_geom(name=f"{body.name}_tip", type=mujoco.mjtGeom.mjGEOM_SPHERE, pos=tip,
                           size=[r, 0, 0], **common)
         elif collision != "full":
@@ -81,14 +82,14 @@ def robot_spec(collision="minimal"):
 
 
 def parked_qpos():
-    """qpos da keyframe "parked" das cenas (pose inicial: perna em 0.18 m, trem abaixado)."""
+    """qpos of the scenes' "parked" keyframe (start pose: legs at 0.18 m, gear down)."""
     flat = mujoco.MjModel.from_xml_path(str(FLAT_XML))
     k = [mujoco.mj_id2name(flat, mujoco.mjtObj.mjOBJ_KEY, i) for i in range(flat.nkey)].index("parked")
     return flat.key_qpos[k].copy()
 
 
 def build(terrain=None, timestep=0.001, collision="minimal"):
-    """Robo + chao. `terrain` = None (plano) ou dict de terrain.make_terrain() (hfield compartilhado)."""
+    """Robot + ground. `terrain` = None (plane) or a terrain.make_terrain() dict (shared hfield)."""
     spec = robot_spec(collision)
     spec.option.timestep = timestep
     spec.visual.global_.offwidth, spec.visual.global_.offheight = 1920, 1080

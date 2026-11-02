@@ -1,13 +1,13 @@
-"""Ambiente de RL residual em GPU: MuJoCo Warp + controlador LQR/VMC (kernel Warp) + politica PPO (RSL-RL).
+"""Residual RL environment on the GPU: MuJoCo Warp + the LQR/VMC controller (Warp kernel) + PPO (RSL-RL).
 
-Cada robo e um mundo do MuJoCo Warp; todos rodam no mesmo terreno grande (terrain.py). A cada passo da
-politica (50 Hz) o grafo CUDA roda `decimation` passos de fisica de 1 ms, e o controlador base roda a
-cada passo de fisica (1 kHz), como no MuJoCo de CPU. A politica so soma um residual (controller.py,
-RESIDUAL) e so no modo OPERATING; com acao zero o robo e exatamente o controlador model-based.
+Each robot is a MuJoCo Warp world; all of them run on the same large terrain (terrain.py). At every policy step
+(50 Hz) the CUDA graph runs `decimation` 1 ms physics steps, and the base controller runs at every physics step
+(1 kHz), as on CPU MuJoCo. The policy only adds a residual (controller.py, RESIDUAL) and only in OPERATING mode;
+with a zero action the robot is exactly the model-based controller.
 
-Actor: so o que o robo real mede (IMU, encoders dos quadris/rodas, odometria), com ruido, mais os comandos
-e o historico curto. Critic: tambem a velocidade real, a altura sobre o chao, um mapa de alturas em volta
-e os parametros sorteados (atrito, massa).
+Actor: only what the real robot measures (IMU, hip/wheel encoders, odometry) with noise, plus the commands and a
+short history. Critic: also the true velocity, the height above ground, a height map around the robot and the
+randomised parameters (friction, mass).
 """
 import math
 from dataclasses import dataclass, field
@@ -28,36 +28,36 @@ from rsl_rl.env import VecEnv
 @dataclass
 class EnvCfg:
     num_envs: int = 4096
-    decimation: int = 20                 # passos de fisica (1 ms) por passo da politica -> 50 Hz
+    decimation: int = 20                 # physics steps (1 ms) per policy step -> 50 Hz
     episode_s: float = 20.0
-    # residual por unidade de acao: [dL_xp, dL_xm] m, [dth_xp, dth_xm] rad, [dT_xp, dT_xm] N.m
+    # residual per unit action: [dL_xp, dL_xm] m, [dth_xp, dth_xm] rad, [dT_xp, dT_xm] N.m
     residual_scale: tuple = (0.08, 0.08, 0.25, 0.25, 3.0, 3.0)
-    history: int = 5                     # quadros do actor empilhados
-    # comandos
+    history: int = 5                     # stacked actor frames
+    # commands
     cmd_interval_s: tuple = (4.0, 8.0)
     speed_range: tuple = (-1.0, 1.5)
     yaw_range: tuple = (-1.5, 1.5)
     leg_range: tuple = (0.20, 0.48)
     p_zero_speed: float = 0.15
     p_zero_yaw: float = 0.3
-    # inicio do episodio
+    # episode start
     p_parked_start: float = 0.15
     start_leg_range: tuple = (0.22, 0.45)
-    spawn_offset: float = 1.0            # [m] sorteio da posicao inicial em volta do centro do ladrilho
-    # empurroes (muda a velocidade da base)
+    spawn_offset: float = 1.0            # [m] random start offset around the tile centre
+    # pushes (change the base velocity)
     push_interval_s: tuple = (3.0, 7.0)
     push_speed: float = 0.6
-    # randomizacao de dominio
+    # domain randomisation
     friction_range: tuple = (0.5, 1.25)
     base_mass_scale: tuple = (0.85, 1.15)
     com_offset: float = 0.02
     obs_noise: bool = True
-    # terreno e curriculum
+    # terrain and curriculum
     terrain_levels: int = 6
     init_max_level: int = 1
-    curriculum: bool = True              # False (avaliacao): cada robo fica no ladrilho de self.level/self.ttype
-    random_tile_type: bool = True        # sorteia o tipo de terreno a cada reset
-    # recompensas (por segundo; multiplicadas por dt da politica)
+    curriculum: bool = True              # False (evaluation): each robot stays on its self.level/self.ttype tile
+    random_tile_type: bool = True        # draw the terrain type at every reset
+    # rewards (per second; multiplied by the policy dt)
     rew: dict = field(default_factory=lambda: dict(
         track_speed=3.0, track_yaw=1.5, track_leg=0.5, upright=-5.0, ang_vel_xy=-0.05, lin_vel_z=-1.0,
         action=-0.02, action_rate=-0.1, torque=-2e-4, gear_contact=-2.0, termination=-10.0))
@@ -67,9 +67,9 @@ _STREAMS = {}
 
 
 def _shared_stream(device):
-    """Stream proprio (o stream padrao do torch nao pode ser capturado num grafo CUDA), compartilhado pelo
-    torch e pelo Warp para nao precisar sincronizar entre eles. Um por processo: se fosse destruido junto
-    com um ambiente, o torch ficaria com um stream invalido."""
+    """A dedicated stream (torch's default stream cannot be captured in a CUDA graph), shared by torch and Warp
+    so they need no synchronisation. One per process: if it died with an environment, torch would be left
+    with an invalid stream."""
     if device not in _STREAMS:
         _STREAMS[device] = wp.Stream(device)
         torch.cuda.set_stream(wp.stream_to_torch(_STREAMS[device]))
@@ -86,12 +86,12 @@ class PrimusWarpEnv(VecEnv):
         self.max_episode_length = int(cfg.episode_s / self.dt)
         self.gen = torch.Generator(device=self.device).manual_seed(seed)
 
-        # ---------------- modelo e terreno ----------------
+        # ---------------- model and terrain ----------------
         self.terrain = terrain or T.make_terrain(n_levels=cfg.terrain_levels, seed=seed)
         self.mjm, self.spec = M.build(self.terrain)
         mjd = mujoco.MjData(self.mjm)
         mjd.qpos[:] = M.parked_qpos()
-        mjd.qpos[0:2] = self.terrain["centers"][0, 0]      # ladrilho plano do nivel 0
+        mjd.qpos[0:2] = self.terrain["centers"][0, 0]      # flat tile of level 0
         mujoco.mj_forward(self.mjm, mjd)
         wp.init()
         self.stream = _shared_stream(str(self.device))
@@ -106,12 +106,12 @@ class PrimusWarpEnv(VecEnv):
         self.mask = tt(self.ctl.mask)
         self.con_geom, self.con_world, self.nacon = tt(self.dw.contact.geom), tt(self.dw.contact.worldid), tt(self.dw.nacon)
         self.qacc_warmstart = tt(self.dw.qacc_warmstart)
-        # buffers por mundo que o passo seguinte le antes de recalcular
+        # per-world buffers the next step reads before recomputing them
         self.reset_buffers = [tt(getattr(self.dw, n)) for n in ("qacc_warmstart", "qacc", "qfrc_actuator", "sensordata",
                                                                   "act", "qfrc_applied", "xfrc_applied")
                               if getattr(self.dw, n, None) is not None and getattr(self.dw, n).shape[0] == N]
-        # todos os arrays por mundo do MuJoCo Warp (inclusive os do solver): um mundo que explodiu fica com estado
-        # escondido corrompido e volta a explodir a cada reset; ele recebe a copia de um mundo saudavel
+        # every per-world MuJoCo Warp array (solver ones included): a world that blew up keeps corrupted hidden
+        # state and blows up again after each reset, so it gets a copy of a healthy world
         self.world_arrays = self._per_world_arrays(self.dw, N)
         self.H = torch.tensor(self.terrain["heights"], device=self.device)
         self.tile_centers = torch.tensor(self.terrain["centers"], device=self.device)   # [levels, types, 2]
@@ -174,15 +174,14 @@ class PrimusWarpEnv(VecEnv):
         return out
 
     def _start_pose_tables(self):
-        """Tabelas L0 -> (angulo do quadril, joelhos, altura do eixo) para nascer operando numa altura qualquer."""
+        """Table L0 -> (hip angle, knee Yp, knee Ym, base height) to spawn operating at any leg length."""
         Ls = np.linspace(0.18, 0.52, 69)
         rows = []
         for L in Ls:
-            a = C.five_bar.symmetric_angle_for_length("xp", L)
-            kp, km, f = C.five_bar.closure("xp", a, -a)
-            rows.append((a, kp, km, f[1]))
+            q, z = C.five_bar.nominal_pose(L, wheel_radius=0.10751, clearance=0.004)
+            rows.append((q["hip_Yp_xp"], q["knee_Yp_xp"], q["knee_Ym_xp"], z))
         self.pose_L = torch.tensor(Ls, dtype=torch.float32, device=self.device)
-        self.pose_tab = torch.tensor(rows, dtype=torch.float32, device=self.device)   # [a, knee_p, knee_m, foot_z]
+        self.pose_tab = torch.tensor(rows, dtype=torch.float32, device=self.device)
 
     def _setup_randomization(self):
         cfg, N, m = self.cfg, self.num_envs, self.mjm
@@ -191,7 +190,7 @@ class PrimusWarpEnv(VecEnv):
         mu = rng.uniform(*cfg.friction_range, N).astype(np.float32)
         tires = [mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, f"wheel_{s}_tire") for s in ("xp", "xm")]
         g = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "ground")
-        for i in tires + [g]:          # o MuJoCo usa o maior atrito do par: sorteia os dois iguais
+        for i in tires + [g]:          # MuJoCo uses the larger friction of the pair: draw both equal
             fr[:, i, 0] = mu
         self.mw.geom_friction = wp.array(fr, dtype=wp.vec3)
         b = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "base")
@@ -210,7 +209,7 @@ class PrimusWarpEnv(VecEnv):
 
     def _capture(self):
         with wp.ScopedStream(self.stream):
-            self._substeps()                      # compila/carrega os kernels antes da captura
+            self._substeps()                      # compile/load the kernels before capturing
             with wp.ScopedCapture(stream=self.stream) as cap:
                 self._substeps()
             self.graph = cap.graph
@@ -225,7 +224,7 @@ class PrimusWarpEnv(VecEnv):
         return lo + (hi - lo) * torch.rand(n, generator=self.gen, device=self.device)
 
     def _ground(self, xy, radius=0.35):
-        """Maior altura do terreno num disco em volta de xy (para nascer sem penetrar)."""
+        """Highest terrain point on a disc around xy (to spawn without penetrating)."""
         offs = torch.tensor([(0, 0), (radius, 0), (-radius, 0), (0, radius), (0, -radius)], device=self.device)
         return T.sample_heights(self.H, self.terrain["size_x"], self.terrain["size_y"], xy[:, None, :] + offs).amax(-1)
 
@@ -253,7 +252,7 @@ class PrimusWarpEnv(VecEnv):
         ground = self._ground(xy)
         q = self.parked.repeat(n, 1)
         parked = torch.rand(n, generator=self.gen, device=self.device) < cfg.p_parked_start
-        # nasce operando: perna numa altura qualquer, trem recolhido
+        # spawn operating: any leg length, gear retracted
         L = self._rand(n, *cfg.start_leg_range)
         k = ((L - self.pose_L[0]) / (self.pose_L[1] - self.pose_L[0])).clamp(0, len(self.pose_L) - 1.001)
         i0 = k.long(); fr = (k - i0)[:, None]
@@ -263,8 +262,7 @@ class PrimusWarpEnv(VecEnv):
             hp, kp_, hm, km_ = self.leg_joints[s]
             q[oper, hp], q[oper, kp_], q[oper, hm], q[oper, km_] = row[oper, 0], row[oper, 1], -row[oper, 0], row[oper, 2]
         q[oper, self.q_gear[0]], q[oper, self.q_gear[1]] = math.radians(-100.0), math.radians(100.0)
-        z_oper = -row[:, 3] + 0.10751 + 0.004
-        q[:, 2] = ground + torch.where(parked, self.parked[2], z_oper)
+        q[:, 2] = ground + torch.where(parked, self.parked[2], row[:, 3])
         q[:, 0:2] = xy
         q[:, 3] = torch.cos(yaw / 2); q[:, 4] = 0; q[:, 5] = 0; q[:, 6] = torch.sin(yaw / 2)
         self.qpos[ids] = q
@@ -302,7 +300,7 @@ class PrimusWarpEnv(VecEnv):
     def _compute_obs(self):
         cfg, o, N = self.cfg, self.out, self.num_envs
         R = self._base_frame()
-        grav = -R[:, 2, :]                                   # gravidade no frame da base (unitaria)
+        grav = -R[:, 2, :]                                   # unit gravity in the base frame
         gyro = self.qvel[:, 3:6]
         legs = torch.stack([o[:, C.O["L_xp"]], o[:, C.O["L_xm"]], o[:, C.O["th_xp"]], o[:, C.O["th_xm"]],
                             o[:, C.O["dL_xp"]], o[:, C.O["dL_xm"]], o[:, C.O["dth_xp"]], o[:, C.O["dth_xm"]]], -1)
@@ -314,7 +312,7 @@ class PrimusWarpEnv(VecEnv):
             grav, gyro, legs, wheels, dx = nz(grav, 0.02), nz(gyro, 0.05), nz(legs, 0.01), nz(wheels, 0.05), nz(dx, 0.03)
         frame = torch.cat([grav, gyro, legs, wheels, dx, oper, self.cmd[:, 0:3], self.actions], -1)
         self.hist = torch.cat([self.hist[:, 1:], frame[:, None]], 1)
-        # critic: estado real + mapa de alturas no frame de heading + parametros sorteados
+        # critic: true state + height map in the heading frame + randomised parameters
         v_body = torch.einsum("nji,nj->ni", R, self.qvel[:, 0:3])
         heading = torch.atan2(-R[:, 0, 1], R[:, 1, 1])
         c, s = torch.cos(heading), torch.sin(heading)
@@ -339,15 +337,15 @@ class PrimusWarpEnv(VecEnv):
         self.last_actions.copy_(self.actions)
         self.actions.copy_(actions.clamp(-1, 1))
         self.res.copy_(self.actions * self.res_scale)
-        # empurroes: muda a velocidade horizontal da base
+        # pushes: change the horizontal base velocity
         self.push_timer -= self.dt
         pushed = (self.push_timer <= 0).nonzero().flatten()
         if len(pushed):
             self.qvel[pushed, 0:2] += self._rand(len(pushed) * 2, -cfg.push_speed, cfg.push_speed).view(-1, 2)
             self.push_timer[pushed] = self._rand(len(pushed), *cfg.push_interval_s)
         wp.capture_launch(self.graph, stream=self.stream)
-        # um mundo que explodiu numericamente (raro; ex.: falha do EPA no contato com o heightfield) vira
-        # queda: troca o estado por um finito antes de qualquer conta e reinicia no fim do passo
+        # a world that blew up numerically (rare; e.g. EPA failure in a heightfield contact) counts as a fall:
+        # replace its state by a finite one before any computation and reset it at the end of the step
         self.bad = ~(torch.isfinite(self.qpos).all(-1) & torch.isfinite(self.qvel).all(-1)
                      & torch.isfinite(self.out).all(-1))
         n_bad = int(self.bad.sum())
@@ -389,7 +387,7 @@ class PrimusWarpEnv(VecEnv):
         yaw_err = (yaw_rate - self.cmd[:, 1]).square()
         leg = 0.5 * (o[:, C.O["L_xp"]] + o[:, C.O["L_xm"]])
         grav_b = -R[:, 2, :]
-        # trem de pouso tocando o chao com o robo operando (o "sentar no trem" do treino anterior)
+        # landing gear touching the ground while operating (the "sit on the gear" exploit of the Isaac run)
         n = min(int(self.nacon[0].item()), self.con_geom.shape[0])
         gear_hit = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         if n:
@@ -409,8 +407,8 @@ class PrimusWarpEnv(VecEnv):
             torque=self.out[:, C.O["tau_hYp_xp"]:C.O["tau_w_xm"] + 1].square().sum(-1),
             gear_contact=gear_hit.float(),
         )
-        # queda pela geometria (so pneus e pontas do trem colidem com o terreno): inclinou demais, o chassi
-        # desceu abaixo da altura minima de operacao, ou a protecao do controlador cortou os torques
+        # falls from the geometry (only tires and gear tips collide with the terrain): tilted too much, chassis
+        # below the minimum operating height, or the controller protection cut the torques
         tilt = grav_b[:, 2] > -math.cos(math.radians(50.0))
         fell = tilt | (self.base_height < 0.2) | (o[:, C.O["protect"]] > 0.5) | self.bad
         half = torch.tensor([self.terrain["size_x"], self.terrain["size_y"]], device=self.device) / 2 - 1.0
@@ -439,7 +437,7 @@ class PrimusWarpEnv(VecEnv):
         log["Metrics/nonfinite_resets"] = self.bad[ids].float().sum()
         if not self.cfg.curriculum:
             return
-        # curriculum: sobe de nivel se aguentou o episodio seguindo o comando; desce se caiu
+        # curriculum: level up after finishing the episode tracking the command; level down after a fall
         up = timeout[ids] & (err < 0.25)
         down = terminated[ids]
         lv = self.level[ids] + up.long() - down.long()

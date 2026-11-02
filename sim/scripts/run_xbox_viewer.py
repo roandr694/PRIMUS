@@ -1,96 +1,86 @@
+"""Drive the robot in the MuJoCo viewer with an Xbox (or any SDL) gamepad.
+
+    python3 scripts/run_xbox_viewer.py [--flat]        # macOS: mjpython scripts/run_xbox_viewer.py
+
+Left stick Y: speed | right stick X: turn | triggers or D-pad: leg height (latches, 0.18-0.52 m)
+A: soft stop | B: hard brake | X: land <-> stand up (the landing gear is automatic) | Start: restart.
+If your gamepad maps differently, check the indices with scripts/inspect_gamepad.py.
+"""
 import argparse
 import os
 import time
 
-import _paths  # noqa: F401  (control/ no sys.path)
+import mujoco
+import mujoco.viewer
+
 import robot_model as rm
+from pilot import Pilot
 from repo_control_policy import RepoControlPolicy
-from xbox_controller import XboxController, XboxMapping
 
 
-def _require_runtime():
-    try:
-        import mujoco
-        import mujoco.viewer
-    except ModuleNotFoundError:
-        print("MuJoCo is not installed in the active Python environment.")
-        print("Use the existing conda env:")
-        print("  conda run -n bipedal python3 -m pip install -r requirements.txt")
-        raise SystemExit(1)
-    try:
+class Gamepad:
+    """pygame joystick -> logical pilot inputs (see pilot.py)."""
+
+    def __init__(self, args):
         os.environ.setdefault("SDL_VIDEODRIVER", "offscreen")
-        import pygame
-    except ModuleNotFoundError:
-        print("pygame is not installed in the active Python environment.")
-        print("Use the existing conda env:")
-        print("  conda run -n bipedal python3 -m pip install pygame")
-        raise SystemExit(1)
-    return mujoco, pygame
+        try:
+            import pygame
+        except ModuleNotFoundError:
+            raise SystemExit("pygame is missing: python3 -m pip install pygame")
+        self.pygame, self.a = pygame, args
+        pygame.init()
+        if pygame.joystick.get_count() < 1:
+            raise SystemExit("No gamepad found by pygame. Pair the controller and try scripts/inspect_gamepad.py.")
+        self.js = pygame.joystick.Joystick(0)
+        self.js.init()
+        print(f"gamepad: {self.js.get_name()}")
+
+    def _axis(self, i, default=0.0):
+        return float(self.js.get_axis(i)) if 0 <= i < self.js.get_numaxes() else default
+
+    def _button(self, i):
+        return 0 <= i < self.js.get_numbuttons() and bool(self.js.get_button(i))
+
+    def read(self):
+        self.pygame.event.pump()
+        a = self.a
+        trigger = lambda i: max(0.0, min(1.0, (self._axis(i, -1.0) + 1.0) / 2))   # SDL triggers: -1 released, +1 pressed
+        dpad = float(self.js.get_hat(0)[1]) if self.js.get_numhats() else 0.0
+        return dict(speed=self._axis(a.speed_axis) * (1 if a.no_invert_speed else -1),
+                    yaw=self._axis(a.yaw_axis) * (-1 if a.no_invert_yaw else 1),
+                    up=trigger(a.right_trigger_axis) + max(dpad, 0.0), down=trigger(a.left_trigger_axis) + max(-dpad, 0.0),
+                    stop=self._button(a.stop_button), brake=self._button(a.brake_button),
+                    park=self._button(a.gear_button), reset=self._button(a.reset_button))
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run the MuJoCo viewer controlled by a wireless Xbox controller.")
-    parser.add_argument("--speed-axis", type=int, default=1, help="Left stick Y (vertical).")
-    parser.add_argument("--yaw-axis", type=int, default=2, help="Right stick X (horizontal). Use inspect_gamepad.py if your mapping differs.")
-    parser.add_argument("--left-trigger-axis", type=int, default=4)
-    parser.add_argument("--right-trigger-axis", type=int, default=5)
-    parser.add_argument("--stop-button", type=int, default=0, help="Button that zeros speed/yaw while held (soft stop, coasts down). Xbox A is usually 0.")
-    parser.add_argument("--brake-button", type=int, default=1, help="Button for a HARD brake (snap speed target to 0, max decel). Xbox B is usually 1.")
-    parser.add_argument("--reset-button", type=int, default=7, help="Button that resets policy targets. Xbox Start/Menu is often 7.")
-    parser.add_argument("--gear-button", type=int, default=2, help="Botao que pede pousar/levantar (o trem de pouso e automatico). Xbox X costuma ser 2.")
-    parser.add_argument("--flat", action="store_true", help="Chao plano em vez da arena.")
-    parser.add_argument("--no-invert-speed", action="store_true")
-    parser.add_argument("--no-invert-yaw", action="store_true", help="Yaw is inverted by default (stick right turns right); pass this to undo.")
-    parser.add_argument("--max-speed", type=float, default=1.5, help="Velocidade maxima comandada (m/s).")
-    parser.add_argument("--max-yaw-rate", type=float, default=1.8)
-    args = parser.parse_args()
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--flat", action="store_true", help="flat ground instead of the arena")
+    ap.add_argument("--max-speed", type=float, default=1.5, help="[m/s]")
+    ap.add_argument("--max-yaw-rate", type=float, default=1.8, help="[rad/s]")
+    for name, default in (("speed-axis", 1), ("yaw-axis", 2), ("left-trigger-axis", 4), ("right-trigger-axis", 5),
+                          ("stop-button", 0), ("brake-button", 1), ("gear-button", 2), ("reset-button", 7)):
+        ap.add_argument(f"--{name}", type=int, default=default)
+    ap.add_argument("--no-invert-speed", action="store_true")
+    ap.add_argument("--no-invert-yaw", action="store_true", help="by default stick right = turn right")
+    args = ap.parse_args()
 
-    mujoco, pygame = _require_runtime()
-    try:
-        gamepad = XboxController(
-            pygame,
-            mapping=XboxMapping(
-                speed_axis=args.speed_axis,
-                yaw_axis=args.yaw_axis,
-                left_trigger_axis=args.left_trigger_axis,
-                right_trigger_axis=args.right_trigger_axis,
-                stop_button=args.stop_button,
-                brake_button=args.brake_button,
-                reset_button=args.reset_button,
-                gear_button=args.gear_button,
-                invert_speed=not args.no_invert_speed,
-                invert_yaw=not args.no_invert_yaw,
-            ),
-            max_speed=args.max_speed,
-            max_yaw_rate=args.max_yaw_rate,
-        )
-    except RuntimeError as exc:
-        print(exc)
-        print("Use scripts/inspect_gamepad.py to verify pygame can see the controller.")
-        raise SystemExit(1)
-
+    pad, pilot = Gamepad(args), Pilot(args.max_speed, args.max_yaw_rate)
     _, model, data, path = rm.load(flat=args.flat)
     policy = RepoControlPolicy(mujoco, model)
     policy.reset(data)
-
-    print(f"Opening MuJoCo viewer for {path}")
-    print(f"Using controller: {gamepad.name}")
-    print("Left stick Y: speed | right stick X: yaw | ride height: D-pad up/down OR triggers (latching)")
-    print("A: soft stop (coast) | B: HARD brake | X: pousar/levantar (trem automatico) | Start/Menu: reset targets + height.")
-    print("O robo nasce estacionado e levanta sozinho; altura da perna de 0.18 a 0.52 m.")
-
+    print(f"{path.name}: the robot starts parked and stands up by itself.")
     with mujoco.viewer.launch_passive(model, data) as viewer:
         while viewer.is_running():
             start = time.time()
-            command = gamepad.read()
-            if gamepad.consume_reset_requested():
+            command, reset = pilot.command(pad.read(), model.opt.timestep)
+            if reset:
+                rm.reset(mujoco, model, data)
                 policy.reset(data)
             policy.apply(data, command)
             mujoco.mj_step(model, data)
             viewer.sync()
-            remaining = model.opt.timestep - (time.time() - start)
-            if remaining > 0.0:
-                time.sleep(remaining)
+            time.sleep(max(0.0, model.opt.timestep - (time.time() - start)))
 
 
 if __name__ == "__main__":

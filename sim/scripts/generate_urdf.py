@@ -1,6 +1,6 @@
-"""Gera o URDF (para Isaac Sim) com as mesmas malhas/massas do MJCF.
-URDF nao representa cadeias fechadas: o laco de cada perna (link Y- <-> canela, no eixo da roda)
-fica descrito em loop_closures.json e e criado no USD pelo script isaac/add_loop_closures.py."""
+"""Generates the URDF (for Isaac Sim) with the same meshes/masses as the MJCF.
+URDF cannot describe closed chains: the loop of each leg (link Y- <-> shin, at the wheel axle) is written to
+loop_closures.json and created in the USD by isaac/add_loop_closures.py."""
 import json, os, sys
 import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'tools'))
@@ -56,9 +56,9 @@ for g, d in GEAR.items():
 body = '\n'.join(link(n) for n in links)
 matx = '\n'.join(f'  <material name="{k}"><color rgba="{f(v)}"/></material>' for k, v in mats.items())
 urdf = f'''<?xml version="1.0"?>
-<!-- Robo bipedal com rodas - gerado da montagem principal do Fusion. X lateral, Y frente, Z cima. SI.
-     ATENCAO: cada perna e um 5 barras FECHADO. O URDF e uma arvore; o fechamento (linkYm_* <-> shin_* no eixo da roda)
-     esta em loop_closures.json e e criado no USD por isaac/add_loop_closures.py. -->
+<!-- Wheel-legged biped, generated from the Fusion main assembly. X right, Y forward, Z up. SI.
+     NOTE: each leg is a CLOSED 5-bar. URDF is a tree; the closure (linkYm_* <-> shin_* at the wheel axle)
+     is in loop_closures.json and is created in the USD by isaac/add_loop_closures.py. -->
 <robot name="robo_bipedal">
 {matx}
 {body}

@@ -1,8 +1,8 @@
-"""Avaliacao: controlador model-based sozinho (residual zero) x model-based + politica residual.
+"""Evaluation: model-based controller alone (zero residual) vs model-based + residual policy.
 
-Os dois rodam exatamente os mesmos cenarios: mesmos ladrilhos (cada robo fixo num tipo/nivel de terreno),
-mesmas sementes de comandos, empurroes, atrito e massa. Sem curriculum. Mede, por tipo e nivel de
-terreno: quedas por minuto de robo, erro de velocidade e de giro, e o tamanho medio do residual.
+Both run the same scenarios: the same tiles (each robot fixed to one terrain type/level), the same seeds for
+commands, pushes, friction and mass. No curriculum. Reports, per terrain type and level: falls per robot
+minute, speed and turn-rate errors, and the mean residual size.
 
     ~/test/isaac-rl/bin/python sim/warp_rl/eval.py --checkpoint <run>/logs/model_1999.pt --out <run>
 """
@@ -18,15 +18,16 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 
-def make_env(num_envs, seed, device):
+def fixed_tile_env(num_envs, seed, device, **cfg_overrides):
+    """Environment without curriculum: robots split evenly over the 36 tiles (type x level), fixed for good."""
     from env import EnvCfg, PrimusWarpEnv
-    cfg = EnvCfg(num_envs=num_envs, curriculum=False, random_tile_type=False, p_parked_start=0.0,
-                 spawn_offset=0.25)
+    cfg = EnvCfg(num_envs=num_envs, curriculum=False, random_tile_type=False, **{"p_parked_start": 0.0,
+                 "spawn_offset": 0.25, **cfg_overrides})
     env = PrimusWarpEnv(cfg, device=device, seed=seed)
-    n_types, n_levels = len(env.terrain["types"]), cfg.terrain_levels
+    n_types = len(env.terrain["types"])
     idx = torch.arange(num_envs, device=env.device)
-    env.ttype[:] = idx % n_types
-    env.level[:] = (idx // n_types) % n_levels
+    tile = idx * (n_types * cfg.terrain_levels) // num_envs
+    env.ttype[:], env.level[:] = tile % n_types, tile // n_types
     env._reset(idx)
     env._compute_obs()
     return env
@@ -41,7 +42,7 @@ def load_policy(env, checkpoint, device):
 
 
 def rollout(env, policy, steps):
-    """Roda `steps` passos; devolve somatorios por robo."""
+    """Runs `steps` steps; returns per-robot sums."""
     N = env.num_envs
     z = lambda: torch.zeros(N, device=env.device)
     falls, speed_err, yaw_err, res, oper = z(), z(), z(), z(), z()
@@ -53,7 +54,7 @@ def rollout(env, policy, steps):
             heading = torch.stack([R[:, 0, 1], R[:, 1, 1]], -1)
             heading = heading / heading.norm(dim=-1, keepdim=True).clamp_min(1e-6)
             obs, _, dones, ex = env.step(a)
-            o = (env.cs[:, 0] == 2).float()        # modo OPERATING
+            o = (env.cs[:, 0] == 2).float()        # OPERATING mode
             v_fwd = (env.qvel[:, 0:2] * heading).sum(-1)
             yaw_rate = (env.R @ env.qvel[:, 3:6, None])[:, 2, 0]
             speed_err += (v_fwd - env.cmd[:, 0]).abs() * o
@@ -90,8 +91,8 @@ def summarize(env, r, steps):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--checkpoint", required=True)
-    ap.add_argument("--out", required=True, help="pasta do experimento")
-    ap.add_argument("--num-envs", type=int, default=2160)    # 6 tipos x 6 niveis x 60 robos
+    ap.add_argument("--out", required=True, help="experiment folder")
+    ap.add_argument("--num-envs", type=int, default=2160)    # 6 types x 6 levels x 60 robots
     ap.add_argument("--seconds", type=float, default=60.0)
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--device", default="cuda:0")
@@ -99,7 +100,7 @@ def main():
 
     results = {}
     for label in ("model_based_only", "model_based_plus_rl"):
-        env = make_env(args.num_envs, args.seed, args.device)
+        env = fixed_tile_env(args.num_envs, args.seed, args.device)
         policy = load_policy(env, args.checkpoint, args.device) if label.endswith("rl") else None
         steps = int(args.seconds / env.dt)
         results[label] = summarize(env, rollout(env, policy, steps), steps)
@@ -107,7 +108,7 @@ def main():
         torch.cuda.empty_cache()
 
     base, rl = results["model_based_only"], results["model_based_plus_rl"]
-    lines = ["| terreno | quedas/min LQR | quedas/min LQR+RL | erro vel. LQR | erro vel. LQR+RL | |residual| |",
+    lines = ["| terrain | falls/min LQR | falls/min LQR+RL | speed err. LQR | speed err. LQR+RL | |residual| |",
              "|---|---:|---:|---:|---:|---:|"]
     for k in base:
         lines.append(f"| {k} | {base[k]['falls_per_robot_minute']:.3f} | {rl[k]['falls_per_robot_minute']:.3f} | "
@@ -118,9 +119,9 @@ def main():
     (out / "evaluation.json").write_text(json.dumps(dict(checkpoint=str(args.checkpoint), seconds=args.seconds,
                                                          seed=args.seed, num_envs=args.num_envs, results=results), indent=2))
     (out / "evaluation.md").write_text(
-        f"# Avaliacao\n\nCheckpoint: `{args.checkpoint}`\n\n{args.num_envs} robos, {args.seconds:.0f} s cada, "
-        f"empurroes e randomizacao ligados, sem curriculum. Mesmos cenarios nas duas colunas.\n"
-        f"Erro de velocidade em m/s (medio, so com o robo operando). |residual| = media de |acao| (0 a 1).\n\n{table}\n")
+        f"# Evaluation\n\nCheckpoint: `{args.checkpoint}`\n\n{args.num_envs} robots, {args.seconds:.0f} s each, "
+        f"pushes and randomisation on, no curriculum. Same scenarios in both columns.\n"
+        f"Speed error in m/s (mean, only while operating). |residual| = mean |action| (0 to 1).\n\n{table}\n")
 
 
 if __name__ == "__main__":

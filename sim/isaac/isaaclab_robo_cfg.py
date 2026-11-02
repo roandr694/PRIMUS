@@ -8,10 +8,16 @@ from pathlib import Path
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import DCMotorCfg, ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg
-from kinematics import nominal_pose
+import math
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "control"))
+from five_bar import nominal_pose  # noqa: E402
 from actuator_parameters import JOINT_NO_LOAD_SPEED, JOINT_TORQUE_LIMIT, JOINT_STALL_TORQUE, ROTOR_ARMATURE
 
-JOINT_POS, BASE_HEIGHT = nominal_pose()
+JOINT_POS, BASE_HEIGHT = nominal_pose(0.27)
+# Landing gear retracted. Its servo is position-controlled: tasks must hold this target explicitly
+# (Isaac Lab starts joint position targets at zero = gear down; see docs/terrain-run-2026-10-31.md).
+JOINT_POS.update(gear_front=-math.radians(100), gear_rear=math.radians(100))
 USD_PATH = Path(__file__).resolve().parent / 'usd' / 'robo_bipedal.usd'
 ROBO_BIPEDAL_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(

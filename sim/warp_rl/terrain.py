@@ -1,16 +1,16 @@
-"""Terreno grande compartilhado por todos os robos (como os terrenos do Isaac Lab): uma grade de ladrilhos.
+"""One large terrain shared by all robots (like Isaac Lab terrains): a grid of tiles.
 
-Linhas = nivel de dificuldade (0 = facil), colunas = tipo de terreno. Todos os robos estao no mesmo
-heightfield; cada um nasce no centro de um ladrilho e pode rodar para os vizinhos. No MuJoCo Warp cada
-robo e um "mundo" separado (eles nao se veem nem colidem entre si), mas o terreno e o mesmo.
+Rows = difficulty level (0 = easy), columns = terrain type. All robots are on the same heightfield; each one
+spawns at a tile centre and may drive into the neighbours. In MuJoCo Warp each robot is a separate "world"
+(they do not see or collide with each other), but the terrain is the same.
 
-Tipos pensados para um robo de rodas sem camera (obstaculos que ele deve passar so sentindo):
-  flat       plano
-  rough      ruido suave (pedriscos, irregularidades) ate +-3 cm
-  slope      piramide de rampa (sobe e desce) ate 15 graus
-  waves      ondulacoes/lombadas suaves ate 6 cm
-  steps      pequenos degraus em anel ate 5 cm (a quina ocupa 1 celula do heightfield)
-  blocks     blocos/obstaculos discretos aleatorios ate 5 cm
+Types for a wheeled robot without a camera (obstacles it should cross by feel):
+  flat       flat
+  rough      smooth noise (gravel, bumps) up to +-3 cm
+  slope      ramp pyramid (up and down) up to 15 deg
+  waves      smooth waves / speed bumps up to 6 cm
+  steps      small ring steps up to 5 cm (the edge spans one heightfield cell)
+  blocks     random discrete blocks up to 5 cm
 """
 import numpy as np
 
@@ -18,7 +18,7 @@ TYPES = ("flat", "rough", "slope", "waves", "steps", "blocks")
 
 
 def _tile(kind, level, n_levels, n, res, rng):
-    """Alturas [m] de um ladrilho n x n (celula `res` m)."""
+    """Heights [m] of an n x n tile (cell `res` m)."""
     d = level / max(n_levels - 1, 1)                 # 0..1
     u = (np.arange(n) - (n - 1) / 2) * res          # coordenadas locais [m]
     X, Y = np.meshgrid(u, u, indexing="xy")
@@ -28,7 +28,7 @@ def _tile(kind, level, n_levels, n, res, rng):
     if kind == "rough":
         amp = 0.005 + 0.025 * d
         z = rng.uniform(-amp, amp, (n // 4 + 2, n // 4 + 2))
-        # interpola o ruido grosso para ficar suave (pedras de ~10-20 cm)
+        # interpolate coarse noise so it is smooth (stones of ~10-20 cm)
         xi = np.linspace(0, z.shape[1] - 1, n)
         zz = np.array([np.interp(xi, np.arange(z.shape[1]), row) for row in z])
         yi = np.linspace(0, z.shape[0] - 1, n)
@@ -58,17 +58,17 @@ def _tile(kind, level, n_levels, n, res, rng):
             i, j = rng.integers(0, n - w, 2)
             z[i:i + w, j:j + w] = max(z[i:i + w, j:j + w].max(), rng.uniform(0.3, 1.0) * hmax)
         c = slice(n // 2 - int(0.6 / res), n // 2 + int(0.6 / res))
-        z[c, c] = 0.0                                  # area de nascimento limpa
+        z[c, c] = 0.0                                  # clear spawn area
         return z
     raise ValueError(kind)
 
 
 def make_terrain(n_levels=6, types=TYPES, tile=8.0, res=0.08, border=4.0, seed=0):
-    """Gera o heightfield. Devolve dict com heights[nrow(y), ncol(x)], tamanho, e os centros dos ladrilhos.
+    """Builds the heightfield. Returns a dict with heights[nrow(y), ncol(x)], the size and the tile centres.
 
-    res = 8 cm: no MuJoCo Warp a colisao pneu x heightfield testa todas as celulas embaixo do pneu e o custo
-    cresce rapido com a resolucao (4096 robos: 2.3 ms por passo em 8 cm, 4.4 ms em 4 cm, 81 ms em 2 cm).
-    Consequencia: a quina de um degrau vira uma rampa de 8 cm de largura."""
+    res = 8 cm: in MuJoCo Warp the tire x heightfield collision tests every cell below the tire and the cost
+    grows fast with resolution (4096 robots: 2.3 ms per step at 8 cm, 4.4 ms at 4 cm, 81 ms at 2 cm).
+    Consequence: a step edge becomes an 8 cm wide ramp."""
     rng = np.random.default_rng(seed)
     n = int(round(tile / res)) + 1
     nb = int(round(border / res))
@@ -90,7 +90,7 @@ def make_terrain(n_levels=6, types=TYPES, tile=8.0, res=0.08, border=4.0, seed=0
 
 
 def sample_heights(H, size_x, size_y, xy):
-    """Altura do terreno (bilinear) em pontos xy [..., 2] (torch). H: tensor [nrow(y), ncol(x)]."""
+    """Terrain height (bilinear) at points xy [..., 2] (torch). H: tensor [nrow(y), ncol(x)]."""
     import torch
     ny, nx = H.shape
     u = ((xy[..., 0] + size_x / 2) / size_x * (nx - 1)).clamp(0, nx - 1.001)

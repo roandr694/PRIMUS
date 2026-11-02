@@ -1,20 +1,20 @@
-# Primeiro PPO de terreno no Isaac (2026-10-31) — post-mortem
+# First Isaac terrain PPO run (2026-10-31) — post-mortem
 
-Execucao `2026-10-31_15-16-02-terrain-cuda-0`: tarefa `Primus-Terrain-Direct`, 128 ambientes, 3.000 atualizacoes,
-acao = torque bruto (+-18 N.m) nos 6 motores. Os artefatos foram removidos na limpeza do workspace; o resultado
-foi considerado ruim e substituido pelo RL residual em `sim/warp_rl/`.
+Run `2026-10-31_15-16-02-terrain-cuda-0`: task `Primus-Terrain-Direct`, 128 environments, 3000 updates, action =
+raw torque (±18 N·m) on the 6 motors. The run artifacts were removed in the workspace cleanup; the task code is
+kept at the Git tag `isaac-raw-torque-2026-10-31`. It was replaced by the residual RL in `sim/warp_rl/`.
 
-**O que aconteceu:** a politica nao aprendeu a equilibrar. A trajetoria gravada mostra o trem de pouso descendo
-(-97/+97 graus -> 0) e o robo sentado nele, inclinado 12-56 graus, com a base a ~0,28 m (nominal 0,38 m).
+**What happened:** the policy did not learn to balance. The recorded trajectory shows the landing gear coming
+down (−97/+97° → 0) and the robot sitting on it, tilted 12–56°, base at ~0.28 m (nominal 0.38 m).
 
-**Causas:**
-- o alvo de posicao do servo do trem nunca foi definido (o Isaac Lab inicia `joint_pos_target` com zeros = abaixado);
-- terminacao frouxa (altura < 0,20 m, inclinacao > 60 graus) e recompensa `cos(inclinacao)` + bonus de vida grande:
-  sentado e torto ainda rendia ~80% da recompensa;
-- curriculum por ponto de nascimento deixou quase todos os ambientes depois da escada;
-- torque bruto com desvio de exploracao crescente (0,30 -> 0,52), sem compensacao de gravidade;
-- actor sem os estados que o LQR usa (dx, theta, L0); atrito padrao do PhysX (0,5) no terreno; roda como cilindro
-  sem geometria exata.
+**Causes:**
+- the gear servo position target was never set (Isaac Lab starts `joint_pos_target` at zero = gear down);
+- lenient termination (height < 0.20 m, tilt > 60°) and a `cos(tilt)` reward + large alive bonus: sitting
+  tilted still paid ~80% of the reward;
+- a spawn-point curriculum left almost every environment after the stairs;
+- raw torque with a growing exploration std (0.30 → 0.52) and no gravity compensation;
+- the actor lacked the states the LQR uses (dx, θ, L0); default PhysX friction (0.5) on the terrain; the wheel
+  as a cylinder without exact geometry.
 
-Essas licoes valem para a volta ao Isaac (degraus grandes + camera). A direcao atual esta em
-[direcao_controle.md](direcao_controle.md).
+These lessons apply when returning to Isaac (large steps + camera). Current direction:
+[control_roadmap.md](control_roadmap.md).

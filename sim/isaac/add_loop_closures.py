@@ -1,22 +1,21 @@
-"""Fecha o mecanismo de 5 barras de cada perna no USD gerado pelo importador de URDF do Isaac Sim.
+"""Closes the 5-bar mechanism of each leg in the USD made by Isaac Sim's URDF importer.
 
-Cria, para cada perna, uma junta de revolucao (eixo X) entre linkYm_* e shin_* no eixo da roda,
-marcada com excludeFromArticulation=True (o PhysX resolve a articulacao em arvore + esta junta extra
-como restricao de laco).
+For each leg it creates a revolute joint (X axis) between linkYm_* and shin_* at the wheel axle, marked
+excludeFromArticulation=True (PhysX solves the tree articulation + this extra joint as a loop constraint).
 
-Uso (Python do Isaac Sim, ou qualquer Python com usd-core):
+Usage (Isaac Sim Python, or any Python with usd-core):
     ./python.sh add_loop_closures.py usd/robo_bipedal.usd ../models/cad/loop_closures.json
-O arquivo e alterado no lugar (faz backup .bak).
+The file is edited in place (a .bak backup is made).
 """
 import json, shutil, sys
 from pxr import Usd, UsdPhysics, Sdf, Gf
 
 def find_link(stage, name):
     hits = [p for p in stage.Traverse() if p.GetName() == name and p.HasAPI(UsdPhysics.RigidBodyAPI)]
-    if not hits:  # algumas versoes aplicam o RigidBodyAPI so depois; aceita Xform com o nome exato
+    if not hits:  # some versions apply RigidBodyAPI later; accept an Xform with the exact name
         hits = [p for p in stage.Traverse() if p.GetName() == name and p.IsA(Usd.Typed)]
     if len(hits) != 1:
-        raise RuntimeError(f'esperava 1 prim "{name}", achei {len(hits)}: {[str(h.GetPath()) for h in hits]}')
+        raise RuntimeError(f'expected 1 prim "{name}", found {len(hits)}: {[str(h.GetPath()) for h in hits]}')
     return hits[0]
 
 def main(usd_path, loops_path):
@@ -39,7 +38,7 @@ def main(usd_path, loops_path):
         j.CreateAxisAttr(L['axis'])
         j.CreateExcludeFromArticulationAttr(True)
         j.CreateCollisionEnabledAttr(False)
-        print('criada', j.GetPath(), ':', b0.GetPath(), '<->', b1.GetPath())
+        print('created', j.GetPath(), ':', b0.GetPath(), '<->', b1.GetPath())
     stage.GetRootLayer().Save()
     print('ok ->', usd_path)
 
