@@ -59,6 +59,12 @@ python3 scripts/run_quest_viewer.py --world skills --tile gaps --level 2 --start
 | gap width | 10 / 17 / 24 / 31 / 38 / 45 cm | 10 / 14 / 26 / 26 / 38 / 46 cm |
 | overhang (only reported when lower than the robot) | 46 / 42 cm | 45 / 42 cm |
 
+**Looking with the body.** The camera is level and low, so the planner pitches the body (`RobotCommand.pitch_ref`,
+a reference on the LQR pitch state; it holds +20° / −16° steadily, drifting a few cm): down (−18°) when the robot
+is stopped or slow at a drop, unseen ground, stairs down or a gap, and while aligning for such a skill (at least
+1 s, so the map fills in); up (+10°) in front of a "wall" or a low overhang. Level again while a skill executes.
+Looking down, stairs down of 16 / 19 cm are measured step by step ("5x15 cm", "5x18 cm") instead of estimated.
+
 With the real mount the camera is level and about 0.38 m above the ground, so it cannot see the treads just past
 a stair edge going down. When lower ground is seen further on at a stair-like slope, the detector reports "stairs
 down, ~X cm total" (estimated); otherwise "unseen ground" (the guard stops, nothing is offered). Bars higher than

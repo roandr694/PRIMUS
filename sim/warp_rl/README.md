@@ -145,7 +145,24 @@ ray marching, noise ∝ depth², per-episode height bias and map offset, memory,
 median. `train.py --task student --teacher <ckpt>` distils it (RSL-RL Distillation: the student drives, the
 teacher labels); `export_policy.py --task student` exports it for `control/skill_policy.py` (obs_version 3).
 
-**Next:** train the student — the same policy with the elevation map of the simulated D435i (noise, field of view,
+**Teacher v3 (final, 4000 iterations):** stairs up 7 cm 71% (4.3 of 5 steps), 10 cm+ still weak (0.7 steps);
+stairs down 89–97%, gaps to 45 cm 73–100%, bars 79–100%, curbs 25–96%.
+
+**Student v1 (camera map, distilled from teacher v3, 1500 iterations, CAD camera mount):** close to the teacher on
+stairs down up to 13 cm (86–100%), curbs and bars (81–96%), but gaps from 24 cm collapse (0–17% vs 73–88%) and
+stairs down 16/19 cm drop to 77/67%: with the level camera the inside of a gap and the treads past an edge are
+never seen and the near field is blind (~0.85 m), so the jump timing depends on memory and drift. Through the full
+CPU stack (rendered depth → map → planner → student) it descended 13 cm stairs, crossed 17 cm gaps and passed
+under a 42 cm bar. Options: mount the camera rotated 90° (87° vertical FOV), more distillation, a recurrent student.
+
+**Teacher v4 (training):** the policy shapes the jump — 12 actions: the jump trigger plus its extension
+(0.40–0.52 m), push force (150–300 N) and tuck length (0.18–0.32 m), latched when the jump starts
+(`residual = action x scale + offset`, the offset is the default jump); 70% of the stairs robots climb, 20 s
+episodes (a whole flight), climb reward doubled. Initialised from v3 (`train.py --init-from`: the v3 weights are
+copied into the larger networks with the observation columns remapped; checked exact to 4e-7).
+**Student v2 (next):** a GRU student (`train.py --task student --recurrent`), distilled from v4.
+
+**Earlier plan:** train the student — the same policy with the elevation map of the simulated D435i (noise, field of view,
 occlusions, memory, drift) instead of the perfect scans, and a longer history instead of the privileged values,
 distilled from the teacher; then the robot.
 

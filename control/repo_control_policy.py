@@ -50,12 +50,14 @@ class RobotCommand:
     yaw_speed_cmd: float = 0.0      # [rad/s] + = turn left
     leg_length: float = NOMINAL_LEG_LENGTH
     roll_angle: float = 0.0         # [rad]
+    pitch_ref: float = 0.0          # [rad] body pitch to hold (+ = nose up), e.g. to look up / down with the camera
     brake: bool = False             # hard brake: zeroes the speed target immediately
     park: bool = False              # True: stop, lower the gear and park; False: stand up and operate
     max_accel: float = 1.5          # [m/s^2] speed-target ramp (responsiveness); 1.5 = the original tuning
     # learned policy action in physical units, only used while operating (sim/warp_rl/controller.py, RESIDUAL):
-    # (dL_xp, dL_xm [m], dth_xp, dth_xm [rad], dT_xp, dT_xm [N.m], dF_xp, dF_xm [N], jump trigger (> 0.5));
-    # None = model-based only
+    # (dL_xp, dL_xm [m], dth_xp, dth_xm [rad], dT_xp, dT_xm [N.m], dF_xp, dF_xm [N], jump trigger (> 0.5),
+    #  jump extension length [m], jump push force [N], jump tuck length [m]); the last three are latched when the
+    # jump starts (defaults if absent); None = model-based only
     residual: tuple = None
 
 
@@ -294,6 +296,7 @@ class RepoControlPolicy:
         self.ref_z = float(data.qpos[2])
         self.x = self.dx = self.target_position = self.target_speed = self.theta_zero = self.a_lat = 0.0
         self.jump_phase, self.jump_t, self.jump_cool = 0, 0.0, 0.0
+        self.jump_ext, self.jump_push, self.jump_tuck = self.jump_ext_length, self.jump_force, self.jump_tuck_length
         R, gyro, _ = self.imu.read(data, self.dt)
         _, pitch, self.target_yaw = rot_to_rpy(R)
         self.last_leg = {s: self._leg_state(data, s, None, pitch, gyro[0]) for s in SIDES}
@@ -346,7 +349,8 @@ class RepoControlPolicy:
         # ---------- LQR ----------
         theta = 0.5 * (legs["xp"].theta + legs["xm"].theta) - self.theta_zero - 0.5 * (dth[0] + dth[1])
         d_theta = 0.5 * (legs["xp"].d_theta + legs["xm"].d_theta)
-        state = [theta, d_theta, self.x - self.target_position, self.dx - self.target_speed, pitch, pitch_rate]
+        state = [theta, d_theta, self.x - self.target_position, self.dx - self.target_speed,
+                 pitch - command.pitch_ref, pitch_rate]
         K = lqr_k(avg_len)
         T = -sum(K[0][i] * state[i] for i in range(6))     # u = -K x
         Tp = -sum(K[1][i] * state[i] for i in range(6))
@@ -372,21 +376,28 @@ class RepoControlPolicy:
             self.jump_phase = 0
         elif self.jump_phase == 0:
             self.jump_cool += self.dt
-            if trigger and grounded and self.jump_cool >= self.jump_cooldown_s and avg_len < self.jump_ext_length - 0.05:
+            if len(r) > 11 and r[9] > 0.0:                           # policy-chosen jump shape (<= 0: defaults)
+                ext = clamp(r[9], 0.38, self.max_leg_length)
+                push = clamp(r[10], 100.0, 300.0)
+                tuck = clamp(r[11], self.min_leg_length, 0.32)
+            else:
+                ext, push, tuck = self.jump_ext_length, self.jump_force, self.jump_tuck_length
+            if trigger and grounded and self.jump_cool >= self.jump_cooldown_s and avg_len < ext - 0.05:
                 self.jump_phase, self.jump_t = 1, 0.0
+                self.jump_ext, self.jump_push, self.jump_tuck = ext, push, tuck
         elif self.jump_phase == 1:
             self.jump_t += self.dt
-            if avg_len >= self.jump_ext_length or self.jump_t >= self.jump_push_max_s:
+            if avg_len >= self.jump_ext or self.jump_t >= self.jump_push_max_s:
                 self.jump_phase, self.jump_t = 2, 0.0
         else:
             self.jump_t += self.dt
-            if (avg_len <= self.jump_tuck_length + 0.02 and self.jump_t > 0.05) or self.jump_t >= self.jump_tuck_max_s:
+            if (avg_len <= self.jump_tuck + 0.02 and self.jump_t > 0.05) or self.jump_t >= self.jump_tuck_max_s:
                 self.jump_phase, self.jump_cool = 0, 0.0
         jump_f = 0.0
         if self.jump_phase == 1:
-            length_target, jump_f = self.max_leg_length, self.jump_force
+            length_target, jump_f = self.max_leg_length, self.jump_push
         elif self.jump_phase == 2:
-            length_target, jump_f = self.jump_tuck_length, -self.jump_tuck_force
+            length_target, jump_f = self.jump_tuck, -self.jump_tuck_force
         # keep BOTH legs inside [min, max]: when the body is levelled on uneven ground (one leg shorter than the
         # other), shift the mean target instead of pushing one leg past its limit (e.g. one wheel on a ramp
         # with the legs high: the ramp leg retracts instead of the ground leg over-extending)

@@ -18,6 +18,7 @@ RESIDUAL (per robot, physical units, only in OPERATING mode):
   [dF_xp, dF_xm]   force added along each leg [N] (jumps, tucking the legs); in the air the length offset also
                    moves the retracted length
   [jump]           > 0.5 starts the jump primitive (push the legs out, then tuck them; RepoControlPolicy)
+  [ext, push, tuck] jump extension length [m], push force [N], tuck length [m], latched when the jump starts
 
 DRIVE (per robot, `drv`): joint torque limit [N.m] and joint no-load speed [rad/s]. With a no-load speed > 0 the
 available torque drops linearly with the joint speed in the direction of motion (DC motor; a model of the plant,
@@ -51,7 +52,8 @@ _STATE = ["mode", "gear_down", "gear_timer", "stable_time", "length_ref",
           "tf_xp", "tf_xm", "air_xp", "air_xm",                # estimated normal force, time in the air
           "z1_xp", "z1_xm", "z2_xp", "z2_xm", "ddz_xp", "ddz_xm",
           "a_lat",                                             # filtered lateral (centripetal) acceleration
-          "jump_phase", "jump_t", "jump_cool"]                 # jump primitive (0 idle, 1 push, 2 tuck)
+          "jump_phase", "jump_t", "jump_cool",                 # jump primitive (0 idle, 1 push, 2 tuck)
+          "jump_ext", "jump_push", "jump_tuck"]                # its shape, latched at the trigger
 S = {n: i for i, n in enumerate(_STATE)}
 NSTATE = len(_STATE)
 # ---- per-robot outputs: columns of `out` (for observations and rewards) ----
@@ -61,9 +63,9 @@ _OUT = ["theta", "d_theta", "pitch", "roll", "yaw", "pitch_rate", "roll_rate", "
         "tau_hYp_xp", "tau_hYm_xp", "tau_hYp_xm", "tau_hYm_xm", "tau_w_xp", "tau_w_xm", "yaw_limit", "jump_phase"]
 O = {n: i for i, n in enumerate(_OUT)}
 NOUT = len(_OUT)
-# command: speed [m/s], yaw rate [rad/s], leg length [m], roll [rad], park (0/1), max accel [m/s^2]
-NCMD = 6
-NRES = 9
+# command: speed [m/s], yaw rate [rad/s], leg length [m], roll [rad], park (0/1), max accel [m/s^2], pitch ref [rad]
+NCMD = 7
+NRES = 12
 
 for _n, _i in list(S.items()):
     globals()[f"S_{_n.upper()}"] = wp.constant(_i)
@@ -556,6 +558,8 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
     st2 = x - target_position
     st3 = dx - target_speed
     st4 = pitch
+    if operating:
+        st4 = pitch - cmd[w, 6]                     # body pitch to hold (look up / down)
     st5 = pitch_rate
     l0 = wp.clamp(avg_len, prm.l0_lo, prm.l0_hi)
     T = -(lqr_gain(coeffs, 0, l0) * st0 + lqr_gain(coeffs, 1, l0) * st1 + lqr_gain(coeffs, 2, l0) * st2
@@ -585,17 +589,27 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
         jphase = 0
     elif jphase == 0:
         jcool += dt
-        if trigger and grounded == 1 and jcool >= prm.jump_cooldown_s and avg_len < prm.jump_ext_len - 0.05:
+        ext = prm.jump_ext_len
+        push = prm.jump_force
+        tuck = prm.jump_tuck_len
+        if res[w, 9] > 0.0:                         # policy-chosen jump shape (<= 0: defaults)
+            ext = wp.clamp(res[w, 9], 0.38, prm.max_len)
+            push = wp.clamp(res[w, 10], 100.0, 300.0)
+            tuck = wp.clamp(res[w, 11], prm.min_len, 0.32)
+        if trigger and grounded == 1 and jcool >= prm.jump_cooldown_s and avg_len < ext - 0.05:
             jphase = 1
             jt = 0.0
+            cs[w, S_JUMP_EXT] = ext
+            cs[w, S_JUMP_PUSH] = push
+            cs[w, S_JUMP_TUCK] = tuck
     elif jphase == 1:
         jt += dt
-        if avg_len >= prm.jump_ext_len or jt >= prm.jump_push_max_s:
+        if avg_len >= cs[w, S_JUMP_EXT] or jt >= prm.jump_push_max_s:
             jphase = 2
             jt = 0.0
     else:
         jt += dt
-        if (avg_len <= prm.jump_tuck_len + 0.02 and jt > 0.05) or jt >= prm.jump_tuck_max_s:
+        if (avg_len <= cs[w, S_JUMP_TUCK] + 0.02 and jt > 0.05) or jt >= prm.jump_tuck_max_s:
             jphase = 0
             jcool = 0.0
     cs[w, S_JUMP_PHASE] = float(jphase)
@@ -604,9 +618,9 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
     jump_f = float(0.0)
     if jphase == 1:
         length_target = prm.max_len
-        jump_f = prm.jump_force
+        jump_f = cs[w, S_JUMP_PUSH]
     elif jphase == 2:
-        length_target = prm.jump_tuck_len
+        length_target = cs[w, S_JUMP_TUCK]
         jump_f = -prm.jump_tuck_force
     half = 0.5 * wp.abs(Ls[0] - Ls[1])     # keep both legs inside [min, max] on uneven ground
     length_target = wp.clamp(length_target, prm.min_len + half, prm.max_len - half)

@@ -4,8 +4,9 @@ Same structure as env.py (MuJoCo Warp worlds, the base controller in the CUDA gr
 with what the skills need:
   * terrain: skill_terrain.py (box stairs/curbs/islands/bars with sharp edges), collision="full" (chassis box and
     leg capsules collide too, so hitting a step edge or a bar is physical);
-  * action: 9 values with more authority (leg length over the whole range, leg angles, wheel torques), a force
-    along each leg, and a jump trigger (> 0.5 starts the controller's jump primitive: push, then tuck the legs);
+  * action: 12 values with more authority (leg length over the whole range, leg angles, wheel torques), a force
+    along each leg, a jump trigger (> 0.5 starts the controller's jump primitive: push, then tuck the legs) and
+    the jump's shape (extension 0.40-0.52 m, push 150-300 N, tuck length 0.18-0.32 m);
   * drive: joint torque limit drawn per robot (18-25 N.m) with the motor torque-speed droop;
   * commands: forward speed + a heading (the yaw-rate command comes from the heading error, as the skill
     planner will do on the robot) + a preferred leg length that only matters where nothing is overhead;
@@ -33,9 +34,12 @@ EASY = ("flat", "rough", "slope")
 
 @dataclass
 class SkillCfg(EnvCfg):
-    episode_s: float = 15.0
-    # [dL_xp, dL_xm] m, [dth_xp, dth_xm] rad, [dT_xp, dT_xm] N.m, [dF_xp, dF_xm] N, jump trigger per unit action
-    residual_scale: tuple = (0.17, 0.17, 0.5, 0.5, 4.0, 4.0, 150.0, 150.0, 1.0)
+    episode_s: float = 20.0               # a whole flight of stairs fits
+    # residual = action x scale + offset: [dL_xp, dL_xm] m, [dth_xp, dth_xm] rad, [dT_xp, dT_xm] N.m,
+    # [dF_xp, dF_xm] N, jump trigger, jump extension [m], push [N], tuck length [m]
+    residual_scale: tuple = (0.17, 0.17, 0.5, 0.5, 4.0, 4.0, 150.0, 150.0, 1.0, 0.06, 75.0, 0.07)
+    residual_offset: tuple = (0.0,) * 9 + (0.46, 225.0, 0.25)
+    p_climb: float = 0.7                  # stairs tiles: share of robots starting at the foot (else on top)
     history: int = 3
     # commands: forward speed, heading (-> yaw rate), preferred leg length
     speed_range: tuple = (0.3, 1.2)
@@ -56,7 +60,7 @@ class SkillCfg(EnvCfg):
     rew: dict = field(default_factory=lambda: dict(
         track_speed=3.0, track_yaw=1.0, track_leg=0.3, upright=-2.0, ang_vel_xy=-0.05, lin_vel_z=-0.2,
         action=-0.01, action_rate=-0.05, torque=-1e-4, gear_contact=-2.0, body_contact=-3.0, impact=-1.0,
-        stand_still=-1.0, climb=20.0, termination=-10.0))
+        stand_still=-1.0, climb=40.0, termination=-10.0))
 
 
 class SkillEnv(PrimusWarpEnv):
@@ -169,7 +173,7 @@ class SkillEnv(PrimusWarpEnv):
         d, lat = r(ST.STAIR_HALF + 0.25, 3.75), r(-2.0, 2.0)
         cs_, sn = torch.cos(side), torch.sin(side)
         foot = torch.stack([d * cs_ - lat * sn, d * sn + lat * cs_], -1)
-        climb = stairs & (r(0.0, 1.0) < 0.5)
+        climb = stairs & (r(0.0, 1.0) < self.cfg.p_climb)
         local = torch.where(climb[..., None], foot, local)
         yaw = torch.where(climb, self._heading_of(-torch.stack([cs_, sn], -1)) + r(-0.3, 0.3), yaw)
         xy = center[:, None, :] + local

@@ -66,7 +66,8 @@ class Autonomy:
             self.plan.cancel()
         res = self.plan.step(dt, cmd.speed_cmd, cmd.yaw_speed_cmd, buttons, self.ahead, self.behind, out["yaw"],
                              out["x"], out.get("yaw_rate", 0.0), out["dx"], self.obstacle)
-        new = replace(cmd, speed_cmd=res.speed, yaw_speed_cmd=res.yaw_rate, brake=cmd.brake or res.brake)
+        new = replace(cmd, speed_cmd=res.speed, yaw_speed_cmd=res.yaw_rate, brake=cmd.brake or res.brake,
+                      pitch_ref=res.pitch_ref)
         use = self.policy is not None and policy_inputs is not None and \
             (self.policy_mode == "always" or res.state == "EXECUTE")
         if use:

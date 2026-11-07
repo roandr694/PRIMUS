@@ -14,7 +14,8 @@ The observation must match sim/warp_rl/skill_env.py (_compute_obs), in this orde
 Student (obs_version 3, sim/warp_rl/student_env.py): 10 frames of the same history, then the height scan from the
 elevation map (unknown cells = the ground under the wheels), its known mask (155) and the ceiling scan; no
 privileged values.
-The action (in [-1, 1]) x residual_scale is RobotCommand.residual (the 9th value is the jump trigger).
+The action (in [-1, 1]) x residual_scale + residual_offset is RobotCommand.residual (9th value: jump trigger;
+10th-12th: jump extension, push, tuck length).
 """
 import json
 import math
@@ -49,6 +50,7 @@ class SkillPolicy:
         self.net = torch.jit.load(str(d / "policy.pt"), map_location="cpu").eval()
         self.torch = torch
         self.scale = np.array(self.meta["residual_scale"], np.float32)
+        self.offset = np.array(self.meta.get("residual_offset") or np.zeros(len(self.scale)), np.float32)
         self.history = self.meta["history"]
         self.hscan, self.cscan = scan_points()
         self.reset()
@@ -56,6 +58,8 @@ class SkillPolicy:
     def reset(self):
         self.hist = None
         self.action = np.zeros(len(self.scale), np.float32)
+        if hasattr(self.net, "reset"):
+            self.net.reset()                      # recurrent student: clear the memory at the start of a skill
 
     def frame(self, ctl, R, gyro, wheel_speeds, cmd):
         legs = ctl.last_leg
@@ -90,4 +94,4 @@ class SkillPolicy:
         with self.torch.no_grad():
             a = self.net(self.torch.from_numpy(obs)[None])[0].numpy()
         self.action = np.clip(a, -1.0, 1.0).astype(np.float32)
-        return tuple(float(v) for v in self.action * self.scale)
+        return tuple(float(v) for v in self.action * self.scale + self.offset)

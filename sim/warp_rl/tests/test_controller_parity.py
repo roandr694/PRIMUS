@@ -33,8 +33,12 @@ PLAN = [(0.0, dict(park=True)), (1.0, {}), (5.0, dict(speed_cmd=0.6)), (8.0, dic
         (21.0, dict(leg_length=0.30, residual=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 40.0, 40.0, 0.0))),
         (22.0, dict(leg_length=0.30, residual=(0.0,) * 8 + (1.0,))),           # jump primitive
         (22.05, dict(leg_length=0.30)),
-        (24.0, dict(park=True))]
-T_END = 29.0
+        (23.5, dict(leg_length=0.30, residual=(0.0,) * 8 + (1.0, 0.44, 200.0, 0.26))),   # policy-shaped jump
+        (23.55, dict(leg_length=0.30)),
+        (25.0, dict(leg_length=0.30, pitch_ref=0.15)),                       # look up, then down
+        (27.0, dict(leg_length=0.30, pitch_ref=-0.15)),
+        (29.0, dict(park=True))]
+T_END = 34.0
 
 
 def command_at(t):
@@ -63,8 +67,9 @@ class WarpOnCpuData:
     def step(self, data, cmd):
         self._push(data)
         self.ctl.cmd.assign(np.array([[cmd.speed_cmd, cmd.yaw_speed_cmd, cmd.leg_length, cmd.roll_angle, float(cmd.park),
-                                       cmd.max_accel]], np.float32))
-        self.ctl.res.assign(np.array([cmd.residual or (0.0,) * C.NRES], np.float32))
+                                       cmd.max_accel, cmd.pitch_ref]], np.float32))
+        r = tuple(cmd.residual or ()) + (0.0,) * C.NRES
+        self.ctl.res.assign(np.array([r[:C.NRES]], np.float32))
         wp.launch(C.control_kernel, dim=1, inputs=[self.ctl.prm, self.ctl.coeffs, self.qpos, self.qvel, self.sd, self.qfrc,
                                                    self.ctl.cmd, self.ctl.res, self.ctl.drv, self.ctl.cs, self.ctl.out, self.ctrl], device=self.device)
         cs = self.ctl.cs.numpy()[0]

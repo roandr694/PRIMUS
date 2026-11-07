@@ -7,6 +7,10 @@
     EXECUTE  drive across at the skill speed holding that heading; the skill policy does the rest. Ends after
              the feature (odometry) or on timeout; the cancel button (B) brakes and returns to PILOT anytime.
 The guard toggle (Back on the gamepad, or holding B for 1 s) disables/enables the edge guard.
+Looking: the camera is level and low, so the planner pitches the body to look — down (look_down) when stopped or
+slow at a drop / unseen ground / stairs down / gap, and while aligning for such a skill (at least `peek_s` before
+crossing, so the map fills in); up (look_up) when slow in front of a "wall" or a low overhang (a bar seen without
+the floor under it). Back to level while a skill executes.
 Commands use the controller conventions: speed [m/s] + forward, yaw rate [rad/s] + left (counter-clockwise).
 """
 import math
@@ -29,16 +33,19 @@ class PlannerOutput:
     guard_active: bool              # the guard is cutting the pilot's speed now
     offer: object = None            # Feature offered to the pilot
     brake: bool = False             # hard brake (speed target snaps to zero)
+    pitch_ref: float = 0.0          # body pitch to hold [rad] (+ = nose up): looking with the camera
 
 
 class SkillPlanner:
     def __init__(self, brake_accel=0.8, latency=0.7, margin=0.35, heading_gain=1.5, max_yaw=1.5, align_tol_deg=4.0,
-                 skill_timeout=15.0, offer_range=2.5):
+                 skill_timeout=15.0, offer_range=2.5, look_down=-0.32, look_up=0.18, look_rate=0.6, peek_s=1.0):
         # latency: perception + speed-tracking lag of the controller [s] (the real speed trails the command)
         self.brake_accel, self.latency, self.margin = brake_accel, latency, margin
         self.heading_gain, self.max_yaw = heading_gain, max_yaw
         self.align_tol = math.radians(align_tol_deg)
         self.skill_timeout, self.offer_range = skill_timeout, offer_range
+        self.look_down, self.look_up, self.look_rate, self.peek_s = look_down, look_up, look_rate, peek_s
+        self.pitch, self.speed = 0.0, 0.0
         self.state, self.guard_on = "PILOT", True
         self.target, self.goal_heading, self.start_x, self.t = None, 0.0, 0.0, 0.0
         self._prev = {}
@@ -66,6 +73,22 @@ class SkillPlanner:
         """ahead/behind: Feature lists (nearest first) from FeatureDetector; x, speed: odometry [m, m/s];
         obstacle: (distance ahead, distance behind) from the lidar. -> PlannerOutput"""
         self.speed = speed
+        out = self._step(dt, speed_cmd, yaw_cmd, buttons, ahead, behind, heading, x, yaw_rate, obstacle)
+        # where to look (rate limited), from the state and what is ahead
+        want = 0.0
+        near = next((f for f in ahead if f.guard and f.s < 1.5), None)
+        slow = abs(self.speed) < 0.35
+        down_kinds = ("cliff", "curb_down", "stairs_down", "gap")
+        if out.state == "ALIGN" and self.target is not None and self.target.kind in down_kinds:
+            want = self.look_down
+        elif out.state == "PILOT" and near is not None and slow:
+            want = self.look_down if near.kind in down_kinds else self.look_up if near.kind in ("wall", "overhang") else 0.0
+        step = self.look_rate * dt
+        self.pitch += max(-step, min(step, want - self.pitch))
+        out.pitch_ref = self.pitch
+        return out
+
+    def _step(self, dt, speed_cmd, yaw_cmd, buttons, ahead, behind, heading, x, yaw_rate, obstacle):
         skill_hit, cancel_hit = self._press(buttons, "skill"), self._press(buttons, "cancel")
         self._b_held = self._b_held + dt if buttons.get("cancel") else 0.0
         if self._press(buttons, "guard") or (self._b_held >= 1.0 and self._b_held - dt < 1.0):
@@ -86,7 +109,9 @@ class SkillPlanner:
         self.t += dt
         if self.state == "ALIGN":
             err = wrap(self.goal_heading - heading)
-            if abs(err) < self.align_tol and abs(yaw_rate) < 0.2:
+            peeking = self.target.kind in ("cliff", "curb_down", "stairs_down", "gap") and \
+                (self.t < self.peek_s or abs(self.pitch - self.look_down) > 0.05)
+            if abs(err) < self.align_tol and abs(yaw_rate) < 0.2 and not peeking:
                 self.state, self.start_x, self.t = "EXECUTE", x, 0.0
             elif self.t > 6.0:
                 self.cancel()

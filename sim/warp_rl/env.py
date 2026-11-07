@@ -137,6 +137,8 @@ class PrimusWarpEnv(VecEnv):
         self.scan_xy = torch.tensor([(x, y) for x in (-0.3, 0.0, 0.3) for y in (-0.6, -0.3, 0.0, 0.3, 0.6, 0.9, 1.2)],
                                     device=self.device)
         self.res_scale = torch.tensor(cfg.residual_scale, device=self.device)
+        self.res_offset = torch.tensor(getattr(cfg, "residual_offset", None) or [0.0] * len(cfg.residual_scale),
+                                       device=self.device)
         self.extras = {"log": {}}
         self.bad = torch.zeros(N, dtype=torch.bool, device=self.device)
         self._init_buffers()
@@ -364,7 +366,7 @@ class PrimusWarpEnv(VecEnv):
         cfg, N = self.cfg, self.num_envs
         self.last_actions.copy_(self.actions)
         self.actions.copy_(actions.clamp(-1, 1))
-        self.res[:, :self.num_actions] = self.actions * self.res_scale
+        self.res[:, :self.num_actions] = self.actions * self.res_scale + self.res_offset
         # pushes: change the horizontal base velocity
         self.push_timer -= self.dt
         pushed = (self.push_timer <= 0).nonzero().flatten()

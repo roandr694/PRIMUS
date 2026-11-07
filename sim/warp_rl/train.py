@@ -65,6 +65,52 @@ DISTILL_CFG = {
 }
 
 
+def recurrent_student():
+    """GRU student: remembers what the camera saw (edges that left the view, the gap it is jumping)."""
+    return {"class_name": "RNNModel", "rnn_type": "gru", "rnn_hidden_dim": 256, "rnn_num_layers": 1,
+            "hidden_dims": [256, 128], "activation": "elu", "obs_normalization": True,
+            "distribution_cfg": {"class_name": "GaussianDistribution", "init_std": 0.1, "std_type": "scalar"}}
+
+
+def init_from_smaller(runner, path, history, frame_new, a_new):
+    """Copies a skill checkpoint trained with fewer actions into the current networks. The observation is
+    history x frame (frame = 21 proprioceptive values, the last actions, the jump phase) + the rest; the old
+    columns are mapped to their new places, the new action inputs start at weight 0 (normaliser mean 0, var 1)
+    and the new action outputs at 0 (= the residual offsets: default jump shape)."""
+    import torch
+    old = torch.load(path, map_location="cpu", weights_only=False)
+    a_old = old["actor_state_dict"]["mlp.6.weight"].shape[0]
+    frame_old = frame_new - (a_new - a_old)
+    n_old = old["actor_state_dict"]["mlp.0.weight"].shape[1]
+    cols = []                                         # new column of every old column
+    for h in range(history):
+        for c in range(frame_old):
+            cols.append(h * frame_new + (c if c < 21 + a_old else c + a_new - a_old))
+    rest = n_old - history * frame_old
+    cols += [history * frame_new + i for i in range(rest)]
+    cols = torch.tensor(cols)
+    for net, key in ((runner.alg.actor, "actor_state_dict"), (runner.alg.critic, "critic_state_dict")):
+        sd, osd = net.state_dict(), old[key]
+        for name, t in osd.items():
+            new = sd[name]
+            t = t.to(new.device)
+            if new.shape == t.shape:
+                new.copy_(t)
+            elif name == "mlp.0.weight":
+                new.zero_()
+                new[:, cols.to(new.device)] = t
+            elif name.startswith("obs_normalizer._") and t.dim() == 2:
+                new.copy_(torch.zeros_like(new) if name.endswith("_mean") else torch.ones_like(new))
+                new[:, cols.to(new.device)] = t
+            elif name in ("mlp.6.weight", "mlp.6.bias", "distribution.std_param"):
+                new.copy_(torch.full_like(new, 0.3) if name == "distribution.std_param" else torch.zeros_like(new))
+                new[:t.shape[0]] = t
+            else:
+                raise ValueError(f"cannot map {name}: {tuple(t.shape)} -> {tuple(new.shape)}")
+        net.load_state_dict(sd)
+    print(f"initialised from {path}: {a_old} -> {a_new} actions, {n_old} -> {cols.max().item() + 1}+ observations")
+
+
 def git(*args):
     try:
         return subprocess.run(["git", "-C", str(REPO), *args], capture_output=True, text=True, check=True).stdout
@@ -80,7 +126,10 @@ def main():
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--task", choices=("residual", "skills", "recovery", "student"), default="residual")
     ap.add_argument("--teacher", default=None, help="--task student: the skill teacher checkpoint")
+    ap.add_argument("--recurrent", action="store_true", help="--task student: GRU student (memory)")
     ap.add_argument("--resume", default=None, help="continue from this checkpoint (weights + optimiser)")
+    ap.add_argument("--init-from", default=None,
+                    help="skills: start from an older skill checkpoint with fewer actions (weights remapped)")
     ap.add_argument("--name", default=None, help="run name (default: warp-residual / skill-teacher)")
     ap.add_argument("--no-eval", action="store_true")
     args = ap.parse_args()
@@ -110,6 +159,8 @@ def main():
     cfg = EnvCfg(num_envs=args.num_envs)
     ppo = copy.deepcopy(DISTILL_CFG if args.task == "student" else PPO_CFG)
     ppo["seed"] = args.seed
+    if args.task == "student" and args.recurrent:
+        ppo["student"] = recurrent_student()
     if args.task == "skills":                 # more authority: keep exploring (v1 collapsed to std 0.07)
         ppo["actor"]["distribution_cfg"].update(init_std=0.3, std_range=[0.1, 0.5])
     elif args.task == "recovery":             # not a residual: absolute joint targets, explore widely
@@ -140,6 +191,9 @@ def main():
     if args.resume:
         runner.load(args.resume)
         manifest["resumed_from"] = str(Path(args.resume).resolve())
+    elif args.init_from:
+        init_from_smaller(runner, args.init_from, cfg.history, env.frame_dim, env.num_actions)
+        manifest["initialised_from"] = str(Path(args.init_from).resolve())
     else:
         with torch.no_grad():
             head.weight[:env.num_actions].zero_()

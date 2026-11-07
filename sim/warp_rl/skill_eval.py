@@ -34,6 +34,8 @@ def run(env, policy, seconds, distance):
         a = policy(obs) if policy is not None else torch.zeros(N, env.num_actions, device=dev)
         prev = env.qpos[:, 0:2].clone()
         obs, _, dones, ex = env.step(a)
+        if policy is not None and hasattr(policy, "reset"):
+            policy.reset(dones)                     # recurrent student: clear the memory of finished episodes
         new = dones & ~done
         fell |= new & ~ex["time_outs"]
         dist = torch.where(new, (prev - start[:, 0:2]).norm(dim=-1), dist)
@@ -52,11 +54,16 @@ def main():
     ap.add_argument("--seconds", type=float, default=12.0)
     ap.add_argument("--distance", type=float, default=2.5)
     ap.add_argument("--torque", type=float, default=None, help="fixed joint torque limit (default: random 18-25)")
+    ap.add_argument("--student", action="store_true", help="the checkpoint is a distilled student (camera map)")
+    ap.add_argument("--recurrent", action="store_true", help="the student has a GRU")
     ap.add_argument("--out", default=None)
     ap.add_argument("--device", default="cuda:0")
     args = ap.parse_args()
 
-    from skill_env import SkillCfg, SkillEnv
+    if args.student:
+        from student_env import StudentCfg as SkillCfg, StudentEnv as SkillEnv
+    else:
+        from skill_env import SkillCfg, SkillEnv
     cfg = SkillCfg(num_envs=args.num_envs, curriculum=False, random_tile_type=False, p_parked_start=0.0,
                    episode_s=args.seconds + 1.0, push_speed=0.0, p_back=0.0, p_zero_speed=0.0, p_turn=0.0,
                    speed_range=(0.5, 1.0))
@@ -70,11 +77,17 @@ def main():
 
     policies = [("controller", None)]
     if args.checkpoint:
-        from rsl_rl.runners import OnPolicyRunner
-        from train import PPO_CFG
-        ppo = copy.deepcopy(PPO_CFG)
-        ppo["actor"]["distribution_cfg"].update(init_std=0.3, std_range=[0.1, 0.5])
-        runner = OnPolicyRunner(env, ppo, log_dir=None, device=args.device)
+        from rsl_rl.runners import DistillationRunner, OnPolicyRunner
+        from train import DISTILL_CFG, PPO_CFG, recurrent_student
+        if args.student:
+            dcfg = copy.deepcopy(DISTILL_CFG)
+            if args.recurrent:
+                dcfg["student"] = recurrent_student()
+            runner = DistillationRunner(env, dcfg, log_dir=None, device=args.device)
+        else:
+            ppo = copy.deepcopy(PPO_CFG)
+            ppo["actor"]["distribution_cfg"].update(init_std=0.3, std_range=[0.1, 0.5])
+            runner = OnPolicyRunner(env, ppo, log_dir=None, device=args.device)
         runner.load(args.checkpoint)
         policies.append(("policy", runner.get_inference_policy(device=args.device)))
     results = {}

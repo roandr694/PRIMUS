@@ -20,10 +20,11 @@ def main():
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--task", choices=("residual", "skills", "recovery", "student"), default="skills")
     ap.add_argument("--device", default="cuda:0")
+    ap.add_argument("--recurrent", action="store_true", help="student checkpoint with a GRU")
     args = ap.parse_args()
 
     from rsl_rl.runners import DistillationRunner, OnPolicyRunner
-    from train import DISTILL_CFG, PPO_CFG
+    from train import DISTILL_CFG, PPO_CFG, recurrent_student
     if args.task == "skills":
         from skill_env import SkillCfg as Cfg, SkillEnv as Env
     elif args.task == "recovery":
@@ -35,6 +36,8 @@ def main():
     cfg = Cfg(num_envs=16)
     env = Env(cfg, device=args.device)
     ppo = copy.deepcopy(DISTILL_CFG if args.task == "student" else PPO_CFG)
+    if args.recurrent:
+        ppo["student"] = recurrent_student()
     if args.task == "skills":
         ppo["actor"]["distribution_cfg"].update(init_std=0.3, std_range=[0.1, 0.5])
     elif args.task == "recovery":
@@ -49,7 +52,8 @@ def main():
     meta = dict(task=args.task, checkpoint=str(Path(args.checkpoint).resolve()), obs_version=3 if student else 2,
                 obs_dim=int(env.obs["student" if student else "policy"].shape[1]), num_actions=env.num_actions,
                 residual_scale=list(getattr(cfg, "residual_scale", ())),
-                history=cfg.student_history if student else cfg.history)
+                residual_offset=list(getattr(cfg, "residual_offset", None) or ()),
+                history=cfg.student_history if student else cfg.history, recurrent=args.recurrent)
     (out / "policy.json").write_text(json.dumps(meta, indent=2))
     print(f"exported to {out}: {meta}")
 
