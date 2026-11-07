@@ -34,9 +34,13 @@
   <canvas id="panel" width="1024" height="1024"></canvas>
 </main>
 <p class="help">Keyboard (no headset): <kbd>W</kbd>/<kbd>S</kbd> speed · <kbd>A</kbd>/<kbd>D</kbd> turn ·
-  <kbd>E</kbd>/<kbd>Q</kbd> leg up/down · <kbd>space</kbd> brake · <kbd>P</kbd> land/stand up · <kbd>R</kbd> restart.<br>
-  Quest: left stick = speed, right stick = turn, triggers = height, A brake, B stop, X land/stand up,
-  Y restart, both grips = re-centre the screen.</p>
+  <kbd>E</kbd>/<kbd>Q</kbd> leg up/down · <kbd>Enter</kbd> start skill · <kbd>space</kbd> brake/cancel ·
+  <kbd>G</kbd> edge guard · <kbd>P</kbd> land/stand up · <kbd>R</kbd> restart ·
+  <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd> responsiveness smooth/normal/sport.<br>
+  Xbox controller (desktop browser): sticks, triggers or D-pad height, A skill, B brake/cancel, X land/stand up,
+  Y soft stop, Back edge guard, Start restart, LB/RB responsiveness.<br>
+  Quest: left stick = speed, right stick = turn, triggers = height, A start skill, B brake/cancel (hold 1 s: edge
+  guard on/off), X land/stand up, Y restart, right/left stick click = responsiveness up/down, both grips = re-centre.</p>
 
 <script type="module">
 import * as THREE from "three";
@@ -87,10 +91,20 @@ let xrInput = null;      // filled every VR frame
 function keyboardInput() {
   const k = c => keys.has(c) ? 1 : 0;
   return { speed: k("KeyW") - k("KeyS"), yaw: k("KeyD") - k("KeyA"), up: k("KeyE"), down: k("KeyQ"),
-           brake: !!k("Space"), stop: false, park: !!k("KeyP"), reset: !!k("KeyR") };
+           brake: !!k("Space"), stop: false, park: !!k("KeyP"), reset: !!k("KeyR"),
+           skill: !!k("Enter"), guard: !!k("KeyG"),
+           level: k("Digit1") ? 0 : k("Digit2") ? 1 : k("Digit3") ? 2 : null };
+}
+// Xbox / standard gamepad in a desktop browser (Gamepad API "standard" mapping)
+function gamepadInput() {
+  const g = [...(navigator.getGamepads ? navigator.getGamepads() : [])].find(p => p && p.mapping === "standard");
+  if (!g) return null;
+  const b = i => !!g.buttons[i]?.pressed, v = i => g.buttons[i]?.value ?? 0;
+  return { speed: -(g.axes[1] ?? 0), yaw: g.axes[2] ?? 0, up: Math.max(v(7), b(12) ? 1 : 0), down: Math.max(v(6), b(13) ? 1 : 0),
+           skill: b(0), brake: b(1), park: b(2), stop: b(3), slower: b(4), faster: b(5), guard: b(8), reset: b(9) };
 }
 setInterval(() => {
-  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "input", ...(xrInput || keyboardInput()) }));
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "input", ...(xrInput || gamepadInput() || keyboardInput()) }));
 }, 33);
 
 // ---------------------------------------------------------------- pilot panel
@@ -113,15 +127,17 @@ function drawPanel() {
   c.fillStyle = "#e6edf3"; c.font = "600 28px system-ui";
   c.fillText(`gear: ${tel.gear_down ? "DOWN" : "up"}`, 400, 132);
   c.fillText(tel.park ? "request: LAND" : "request: operate", 400, 166);
+  c.fillText(`response: ${tel.level} (${tel.max_accel} m/s²)`, 400, 200);
   // speed
   c.font = "800 96px system-ui"; c.fillStyle = "#e6edf3";
   c.fillText(tel.speed.toFixed(2), 40, 290);
   c.font = "600 30px system-ui"; c.fillText("m/s", 300, 290);
   c.fillStyle = "#8b949e"; c.fillText(`command ${tel.speed_cmd.toFixed(2)}  ·  target ${tel.speed_target.toFixed(2)}`, 40, 335);
-  c.fillText(`turn ${tel.yaw_rate.toFixed(2)} rad/s  (command ${tel.yaw_cmd.toFixed(2)})`, 40, 375);
+  c.fillText(`turn ${tel.yaw_rate.toFixed(2)} rad/s  (command ${tel.yaw_cmd.toFixed(2)})   lateral ${tel.lat_g.toFixed(2)} g`, 40, 375);
+  if (tel.turn_limited) { c.fillStyle = "#d29922"; c.font = "800 30px system-ui"; c.fillText("TURN LIMITED", 40, 420); }
   if (tel.brake) { c.fillStyle = "#f85149"; c.font = "800 34px system-ui"; c.fillText("BRAKE", 380, 230); }
   // artificial horizon (pitch/roll)
-  const cx = 800, cy = 270, r = 140;
+  const cx = 860, cy = 270, r = 130;
   c.save(); c.beginPath(); c.arc(cx, cy, r, 0, 2 * Math.PI); c.clip();
   c.translate(cx, cy); c.rotate(-tel.roll * Math.PI / 180);
   const py = tel.pitch * 4;
@@ -148,16 +164,29 @@ function drawPanel() {
     c.fillStyle = f > 15 ? "#3fb950" : "#f85149"; c.beginPath(); c.arc(730 + i * 130, 555, 30, 0, 2 * Math.PI); c.fill();
     c.fillStyle = "#e6edf3"; c.fillText(`${n} ${f.toFixed(0)} N`, 700 + i * 130, 625);
   });
+  // autonomy: planner state, skill offer / message, edge guard
+  const au = tel.auto;
+  if (au) {
+    const scol = { PILOT: "#30363d", ALIGN: "#d29922", EXECUTE: "#1f6feb" }[au.state] || "#30363d";
+    c.fillStyle = scol; c.beginPath(); c.roundRect(40, 740, 190, 50, 12); c.fill();
+    c.fillStyle = "#e6edf3"; c.font = "800 28px system-ui"; c.fillText(au.state === "PILOT" ? "PILOT" : au.state, 56, 775);
+    const gcol = !au.guard_on ? "#f85149" : au.guard_active ? "#d29922" : "#3fb950";
+    c.fillStyle = gcol; c.beginPath(); c.roundRect(744, 740, 240, 50, 12); c.fill();
+    c.fillStyle = "#0d1117"; c.font = "800 24px system-ui";
+    c.fillText(au.guard_on ? (au.guard_active ? "GUARD STOP" : "EDGE GUARD") : "GUARD OFF", 760, 774);
+    c.fillStyle = au.offer && au.state === "PILOT" ? "#f2cc60" : "#e6edf3"; c.font = "600 22px system-ui";
+    c.fillText((au.message || "").slice(0, 44), 244, 773);
+  }
   // footer: system
   c.fillStyle = "#8b949e"; c.font = "26px system-ui";
-  c.fillText(`sim ${tel.t.toFixed(1)} s · real time ×${tel.rtf.toFixed(2)} · video ${fps} fps · ping ${rtt ? rtt.toFixed(0) : "–"} ms · falls ${tel.falls}`, 40, 790);
-  c.fillText(tel.pilot ? "controls: connected" : "controls: NO SIGNAL (robot stopped)", 40, 830);
-  c.fillText("A brake · B stop · X land/stand up · Y restart · triggers height", 40, 900);
-  c.fillText("both grips: re-centre the screen", 40, 940);
+  c.fillText(`sim ${tel.t.toFixed(1)} s · real time ×${tel.rtf.toFixed(2)} · video ${fps} fps · ping ${rtt ? rtt.toFixed(0) : "–"} ms · falls ${tel.falls}`, 40, 840);
+  c.fillText(tel.pilot ? "controls: connected" : "controls: NO SIGNAL (robot stopped)", 40, 878);
+  c.fillText("A skill · B brake/cancel (hold: guard) · X land/stand up · Y restart", 40, 940);
+  c.fillText("triggers height · stick click response · both grips: re-centre", 40, 978);
   if (tel.fallen) {
-    c.fillStyle = "rgba(248,81,73,0.9)"; c.beginPath(); c.roundRect(560, 790, 420, 140, 20); c.fill();
-    c.fillStyle = "white"; c.font = "800 52px system-ui"; c.fillText("FALL", 700, 860);
-    c.font = "600 26px system-ui"; c.fillText("restarts by itself in 4 s", 615, 905);
+    c.fillStyle = "rgba(248,81,73,0.9)"; c.beginPath(); c.roundRect(560, 810, 420, 130, 20); c.fill();
+    c.fillStyle = "white"; c.font = "800 52px system-ui"; c.fillText("FALL", 700, 872);
+    c.font = "600 22px system-ui"; c.fillText(tel.recovery || "restarts by itself in 4 s", 580, 915);
   }
   panelTex.needsUpdate = true;
 }
@@ -206,17 +235,18 @@ let gripHold = 0, centered = false;
 function readXRGamepads() {
   const s = renderer.xr.getSession();
   if (!s) return null;
-  const inp = { speed: 0, yaw: 0, up: 0, down: 0, brake: false, stop: false, park: false, reset: false };
+  const inp = { speed: 0, yaw: 0, up: 0, down: 0, brake: false, stop: false, park: false, reset: false,
+                faster: false, slower: false, skill: false, guard: false };
   let grips = 0;
   for (const src of s.inputSources) {
     const g = src.gamepad;
     if (!g) continue;
     const stickX = g.axes[2] ?? 0, stickY = g.axes[3] ?? 0;
     const trig = g.buttons[0]?.value ?? 0, grip = g.buttons[1]?.value ?? 0;
-    const b4 = !!g.buttons[4]?.pressed, b5 = !!g.buttons[5]?.pressed;
+    const b4 = !!g.buttons[4]?.pressed, b5 = !!g.buttons[5]?.pressed, click = !!g.buttons[3]?.pressed;
     if (grip > 0.8) grips++;
-    if (src.handedness === "left") { inp.speed = -stickY; inp.down = trig; inp.park = b4; inp.reset = b5; }
-    else { inp.yaw = stickX; inp.up = trig; inp.brake = b4; inp.stop = b5; }
+    if (src.handedness === "left") { inp.speed = -stickY; inp.down = trig; inp.park = b4; inp.reset = b5; inp.slower = click; }
+    else { inp.yaw = stickX; inp.up = trig; inp.skill = b4; inp.brake = b5; inp.faster = click; }
   }
   gripHold = grips === 2 ? gripHold + 1 : 0;
   if (gripHold === 20) recenter();

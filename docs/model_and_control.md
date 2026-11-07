@@ -61,9 +61,36 @@ The wheel rarely exceeds 4 N·m. The arena's 7 cm bumps are at the limit: the wh
 **VMC.** Converts the force along the leg F and Tp into the 2 hip torques, τ = Jᵀ·F_world, with J the wheel-centre Jacobian w.r.t. the hips, projected through the loop constraint so the passive knees follow.
 
 - F = leg length PI + weight per leg (mass without wheels × g / 2) ± roll.
-- Tp = LQR ± leg synchronisation (needed because the yaw differential splays the legs).
+- Tp = LQR ± leg synchronisation (needed because the yaw differential splays the legs). The synchronisation
+  gains scale with (L0 / 0.27)², like the leg inertia about the hip: with fixed gains, tall legs (0.40–0.52 m)
+  oscillated against the yaw loop when turning (leg split up to 22° peak-to-peak at 0.52 m and 1.5 rad/s; now 0.3°).
+- Both legs are kept inside [0.18, 0.52] m: when the body is levelled on uneven ground the mean length target is
+  shifted by half the leg difference. With one wheel on a ramp and the legs high, the ramp leg now retracts instead
+  of the ground leg over-extending and the robot tipping (before: 25° roll at 0.45 m, fall at 0.52 m; now ≤ 0.2°).
 
 **Cascaded loops** (tuned for dt = 1 ms): yaw (rate with feed-forward + slow heading correction), roll (P-D leveller), leg length, angle between the legs.
+
+**Turning.** In a turn the centripetal acceleration a = v·ω (wheel odometry × gyro yaw rate, low-passed ~20 ms)
+moves load to the outer wheel. Two model-based terms act only while turning:
+
+- *Load-transfer feed-forward*: the outer leg gets ΔF = m·a·h_com / hip spacing more force (the inner leg as much
+  less), with the CoM height measured in the model, h_com = 0.585·L0 + 0.112 m. No tuning factor: with it the body
+  stays level (|roll| < 0.1°). Before, the roll loop — proportional only, limited to 50 N — let the body lean out
+  6–8° and, near its limit, the outer leg yielded and the robot tipped over (0.40–0.52 m legs at 1.5 m/s).
+- *Turn-rate envelope*: the commanded yaw rate is limited so that |v·ω| ≤ a_max with the inner wheel keeping
+  ≥ 20% of the weight: a_max = (0.5 − 0.2)·g·track / (1.25·h_com) (the 1.25 effective-height factor was measured
+  from the tire loads). About 3.8 m/s² at 0.27 m and 2.4 m/s² at 0.52 m; it only bites when fast and tall.
+
+In stress tests (yaw steps and ±1.8 rad/s zig-zags at 1.5–2.0 m/s, legs 0.27–0.52 m) the old controller fell in
+6 of 10 cases; with both terms none fell and the maximum roll was 0.4°. Leaning into the turn (banking) would
+put more load on the inner wheel and allow tighter turns; it is not implemented yet (a naive roll reference
+destabilised tall legs) and is a candidate for a careful model-based design or for the RL residual.
+
+**Speed response.** The stick sets the target speed; the controller ramps to it at `RobotCommand.max_accel`
+(default 1.5 m/s², the original tuning, reduced with leg height) and lets the target lead the measured speed by
+at most 0.6 m/s (scaled up with `max_accel`). The pilot scripts offer three levels (`sim/scripts/pilot.py`):
+smooth 0.5, normal 1.5, sport 5 m/s² → 0 to 1.5 m/s in about 2.7 / 1.2 / 0.7 s at 0.27 m, without falls; the
+LQR itself adds 11–21% overshoot.
 
 **Leg range.** Measured by sweeping the hip angles with the collision meshes (symmetric legs):
 
@@ -114,11 +141,15 @@ Optional `ImuConfig` noise: `gyro_noise`, `gyro_bias`, `angle_noise`, `acc_noise
 | 80 N push for 0.1 s | recovers in ~1 s |
 | height 0.18 ↔ 0.52 m, standing and at 0.5 m/s turning 1 rad/s | tracks, no fall |
 | parked → stand up → operate → 80 N push → land | stands up and retracts the gear in 1.9 s; lands in 3.3 s; max pitch 4.7° |
+| turning 1.5 rad/s with legs at 0.52 m | leg split 0.3° peak-to-peak, yaw rate 1.50 ± 0.04 rad/s |
+| one wheel climbing a 13° ramp, the other on the ground, legs 0.22–0.52 m | levels the body (roll ≤ 0.2°), no fall |
+| yaw steps / ±1.8 rad/s zig-zags at 1.5–2.0 m/s, legs 0.27–0.52 m | no fall, max roll 0.4° (before: 6 of 10 fell) |
 | arena: 13° ramp (up, platform, down), floor patches, terrain | no fall |
 | Mahony IMU with noise and bias | no fall; pitch peak-to-peak 0.5° |
 | all of the above | in `robot` mode (encoders + IMU + estimated contact) and in `sim` mode |
 
-Known limit: 0.52 m leg + 1.5 m/s + 1.8 rad/s turn at the same time makes it fall (each alone is fine).
+Tall-and-fast turns are now limited by the turn-rate envelope instead of falling (0.52 m, 1.5 m/s, 1.8 rad/s
+requested → ~1.6 rad/s, level body).
 
 ## 4. To do with real data
 

@@ -19,7 +19,7 @@ MOTOR torque = joint / 9.
     roll    rotation about +Y; + = right side (xp) down;   yaw about +Z; + = turn left
 """
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -52,6 +52,11 @@ class RobotCommand:
     roll_angle: float = 0.0         # [rad]
     brake: bool = False             # hard brake: zeroes the speed target immediately
     park: bool = False              # True: stop, lower the gear and park; False: stand up and operate
+    max_accel: float = 1.5          # [m/s^2] speed-target ramp (responsiveness); 1.5 = the original tuning
+    # learned policy action in physical units, only used while operating (sim/warp_rl/controller.py, RESIDUAL):
+    # (dL_xp, dL_xm [m], dth_xp, dth_xm [rad], dT_xp, dT_xm [N.m], dF_xp, dF_xm [N], jump trigger (> 0.5));
+    # None = model-based only
+    residual: tuple = None
 
 
 @dataclass
@@ -104,6 +109,14 @@ def quat_to_rot(q):
     return np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
                      [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
                      [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)]])
+
+
+def site_lateral(mujoco, model, site_id):
+    """Lateral (X) position of a site in the base frame at qpos0 (the legs move only in their Y-Z planes)."""
+    d = mujoco.MjData(model)
+    mujoco.mj_kinematics(model, d)
+    R = d.xmat[1].reshape(3, 3)
+    return float((R.T @ (d.site_xpos[site_id] - d.xpos[1]))[0])
 
 
 def body_rpy(data, base_body=1):
@@ -220,6 +233,7 @@ class RepoControlPolicy:
         self.wheel_dof = {s: dof(f"wheel_{s}") for s in SIDES}
         self.shin_chain_dofs = {s: [dof(f"hip_Yp_{s}"), dof(f"knee_Yp_{s}")] for s in SIDES}
         self.wheel_radius = float(model.geom_size[self.tire_geom["xp"]][0])
+        self.wheel_track_half = 0.5 * abs(site_lateral(mujoco, model, self.site["xp"]["wheel"]) - site_lateral(mujoco, model, self.site["xm"]["wheel"]))
         # mass below the hip motors that their torque does not "see": wheel + shin + link Y-
         self.below_hip_mass = mass("wheel_xp") + mass("shin_xp") + mass("linkYm_xp")
         # weight carried by the legs (everything but the wheels), per leg
@@ -235,6 +249,11 @@ class RepoControlPolicy:
         self.max_yaw_lead = 1.0
         self.max_leg_length, self.min_leg_length = MAX_LEG_LENGTH, MIN_LEG_LENGTH
         self.air_retract_length = NOMINAL_LEG_LENGTH
+        # jump primitive (triggered by the policy): push with the legs to jump_ext_length, then tuck them to
+        # jump_tuck_length so the wheels clear an edge; the balance loops keep running
+        self.jump_force, self.jump_ext_length, self.jump_push_max_s = 300.0, 0.50, 0.20
+        self.jump_tuck_force, self.jump_tuck_length, self.jump_tuck_max_s = 200.0, 0.20, 0.25
+        self.jump_cooldown_s = 0.5
         # active suspension from the simulated base height/vertical speed; 0 = off
         self.susp_height_gain, self.susp_vel_gain, self.susp_ref_alpha = 0.0, 0.0, 0.004
         # contact: tire "on the ground" when the normal force (true in "sim", estimated from hip torques in
@@ -242,6 +261,16 @@ class RepoControlPolicy:
         self.contact_min_force_n = 5.0 if state_source == "sim" else 15.0
         self.contact_lpf, self.air_grace_s = 0.1, 0.03
         self.theta_zero_ki, self.theta_zero_max = -0.1, 0.15   # [rad/(m.s)], [rad]
+        # turning: the centripetal acceleration a = v * yaw_rate moves load to the outer wheel. Feed-forward the
+        # extra outer-leg force so the body stays level, and limit the commanded turn rate so the inner wheel keeps
+        # a minimum share of the weight (the robot tips over the outer wheel otherwise).
+        hip = [site_lateral(mujoco, model, self.site[s]["hip"]) for s in SIDES]
+        self.hip_spacing = abs(hip[0] - hip[1])           # lateral lever of the leg forces [m]
+        self.com_height_fit = (0.585, 0.112)             # CoM height above ground = a * L0 + b [m] (measured)
+        self.load_transfer_gain = 1.0                    # pure physics (m a h / lever); 1.0 keeps the body level
+        self.inner_load_min = 0.2                        # minimum share of the weight on the inner wheel
+        self.tip_height_factor = 1.25                    # effective tipping height / CoM height (measured in sim)
+        self.a_lat_lpf = 0.05                            # ~20 ms low-pass of the measured lateral acceleration
         self.gear_down_angle = {"gear_front": 0.0, "gear_rear": 0.0}
         self.gear_up_angle = {"gear_front": math.radians(-100.0), "gear_rear": math.radians(100.0)}
         # automatic mode + landing gear (see Mode)
@@ -263,7 +292,8 @@ class RepoControlPolicy:
         self.tire_force = {s: self.force_bias_n for s in SIDES}
         self._zrel_hist, self._ddz_f = {}, {}
         self.ref_z = float(data.qpos[2])
-        self.x = self.dx = self.target_position = self.target_speed = self.theta_zero = 0.0
+        self.x = self.dx = self.target_position = self.target_speed = self.theta_zero = self.a_lat = 0.0
+        self.jump_phase, self.jump_t, self.jump_cool = 0, 0.0, 0.0
         R, gyro, _ = self.imu.read(data, self.dt)
         _, pitch, self.target_yaw = rot_to_rpy(R)
         self.last_leg = {s: self._leg_state(data, s, None, pitch, gyro[0]) for s in SIDES}
@@ -290,6 +320,18 @@ class RepoControlPolicy:
         avg_dlen = 0.5 * (legs["xp"].d_length + legs["xm"].d_length)
 
         command = self._update_mode(command, pitch, pitch_rate, avg_len, dt)
+        r = command.residual if (command.residual is not None and self.mode == Mode.OPERATING) else (0.0,) * 9
+        dl, dth, dT, dF = (r[0], r[1]), (r[2], r[3]), (r[4], r[5]), (r[6], r[7])      # (xp, xm)
+        trigger = len(r) > 8 and r[8] > 0.5
+        if self.mode == Mode.OPERATING:
+            self.length_ref = clamp(self.length_ref + 0.5 * (dl[0] + dl[1]), self.min_leg_length, self.max_leg_length)
+        # turn-rate envelope: |v * yaw_rate| <= a_max(leg length) (inner wheel keeps inner_load_min of the weight)
+        h_com = self.com_height_fit[0] * avg_len + self.com_height_fit[1]
+        v_ref = max(abs(self.dx), abs(command.speed_cmd), 0.3)
+        a_max = (0.5 - self.inner_load_min) * 9.81 * (2 * abs(self.wheel_track_half)) / (self.tip_height_factor * h_com)
+        yaw_limit = a_max / v_ref
+        if abs(command.yaw_speed_cmd) > yaw_limit:
+            command = replace(command, yaw_speed_cmd=math.copysign(yaw_limit, command.yaw_speed_cmd))
         balancing = self.mode != Mode.PARKED
         if balancing:
             self._update_target(command, yaw, avg_len, dt)
@@ -302,7 +344,7 @@ class RepoControlPolicy:
                                     -self.theta_zero_max, self.theta_zero_max)
 
         # ---------- LQR ----------
-        theta = 0.5 * (legs["xp"].theta + legs["xm"].theta) - self.theta_zero
+        theta = 0.5 * (legs["xp"].theta + legs["xm"].theta) - self.theta_zero - 0.5 * (dth[0] + dth[1])
         d_theta = 0.5 * (legs["xp"].d_theta + legs["xm"].d_theta)
         state = [theta, d_theta, self.x - self.target_position, self.dx - self.target_speed, pitch, pitch_rate]
         K = lqr_k(avg_len)
@@ -314,7 +356,7 @@ class RepoControlPolicy:
         if not balancing:
             T_side = {s: -self.park_wheel_damping * self.dx for s in SIDES}   # just hold the wheels
         elif grounded:
-            T_side = {"xp": T + yaw_out, "xm": T - yaw_out}      # right wheel ahead -> turns left
+            T_side = {"xp": T + yaw_out + dT[0], "xm": T - yaw_out + dT[1]}      # right wheel ahead -> turns left
         else:
             T_side = {"xp": 0.0, "xm": 0.0}
 
@@ -324,18 +366,51 @@ class RepoControlPolicy:
         susp = clamp(-self.susp_height_gain * (body_z - self.ref_z) - self.susp_vel_gain * body_vz, -0.06, 0.06)
         on_ground = grounded or not balancing
         length_target = (clamp(self.length_ref + susp, self.min_leg_length, self.max_leg_length) if on_ground
-                         else self.air_retract_length)
+                         else self.air_retract_length + 0.5 * (dl[0] + dl[1]))
+        # jump primitive: idle -> push (legs out at full force) -> tuck (legs in) -> idle (after a cooldown)
+        if self.mode != Mode.OPERATING:
+            self.jump_phase = 0
+        elif self.jump_phase == 0:
+            self.jump_cool += self.dt
+            if trigger and grounded and self.jump_cool >= self.jump_cooldown_s and avg_len < self.jump_ext_length - 0.05:
+                self.jump_phase, self.jump_t = 1, 0.0
+        elif self.jump_phase == 1:
+            self.jump_t += self.dt
+            if avg_len >= self.jump_ext_length or self.jump_t >= self.jump_push_max_s:
+                self.jump_phase, self.jump_t = 2, 0.0
+        else:
+            self.jump_t += self.dt
+            if (avg_len <= self.jump_tuck_length + 0.02 and self.jump_t > 0.05) or self.jump_t >= self.jump_tuck_max_s:
+                self.jump_phase, self.jump_cool = 0, 0.0
+        jump_f = 0.0
+        if self.jump_phase == 1:
+            length_target, jump_f = self.max_leg_length, self.jump_force
+        elif self.jump_phase == 2:
+            length_target, jump_f = self.jump_tuck_length, -self.jump_tuck_force
+        # keep BOTH legs inside [min, max]: when the body is levelled on uneven ground (one leg shorter than the
+        # other), shift the mean target instead of pushing one leg past its limit (e.g. one wheel on a ramp
+        # with the legs high: the ramp leg retracts instead of the ground leg over-extending)
+        half = 0.5 * abs(legs["xp"].length - legs["xm"].length)
+        length_target = clamp(length_target, self.min_leg_length + half, self.max_leg_length - half)
         f_len = self.leg_length_pi(clamp(12.0 * (length_target - avg_len), -1.0, 1.0) - avg_dlen)
-        roll_out = clamp(25.0 * (clamp(12.0 * (command.roll_angle - roll), -3.0, 3.0) - roll_rate), -50.0, 50.0)
+        roll_ref = command.roll_angle + math.atan2(dl[1] - dl[0], self.hip_spacing)   # leg length difference
+        roll_out = clamp(25.0 * (clamp(12.0 * (roll_ref - roll), -3.0, 3.0) - roll_rate), -50.0, 50.0)
         bias = self.force_bias_n if on_ground else 0.0
-        F = {"xp": f_len + bias - roll_out, "xm": f_len + bias + roll_out}   # roll + (right down) -> push right
+        # centripetal load transfer (+ a_lat = towards the left -> the right leg is the outer one), feed-forward
+        self.a_lat += self.a_lat_lpf * ((self.dx * yaw_rate if on_ground and balancing else 0.0) - self.a_lat)
+        ff = self.load_transfer_gain * self.robot_mass * self.a_lat * h_com / self.hip_spacing
+        F = {"xp": f_len + bias - roll_out + ff + dF[0] + jump_f,
+             "xm": f_len + bias + roll_out - ff + dF[1] + jump_f}   # roll + (right down) -> push right
         for s in SIDES:
             if legs[s].length > self.max_leg_length:
                 F[s] -= (legs[s].length - self.max_leg_length) * 2000.0
 
         # ---------- virtual leg torque: LQR + leg synchronisation (yaw differential splays the legs) ----------
         diff, d_diff = legs["xm"].theta - legs["xp"].theta, legs["xm"].d_theta - legs["xp"].d_theta
-        la = clamp(4.0 * (clamp(-40.0 * diff, -8.0, 8.0) - d_diff), -25.0, 25.0)
+        # gains scale with the leg inertia about the hip (~L^2; tuned at 0.27 m): with fixed gains the tall legs
+        # oscillated against the yaw loop when turning
+        k = (avg_len / NOMINAL_LEG_LENGTH) ** 2
+        la = clamp(4.0 * k * (clamp(40.0 * (dth[1] - dth[0] - diff), -8.0, 8.0) - d_diff), -25.0 * k, 25.0 * k)
         Tp_side = {"xm": Tp + la, "xp": Tp - la}
         if not balancing:   # parked: each leg perpendicular to the body (body_angle = 0)
             Tp_side = {s: -self.park_leg_kp * legs[s].body_angle - self.park_leg_kd * legs[s].d_body_angle
@@ -358,6 +433,7 @@ class RepoControlPolicy:
                 "left_leg_length": legs["xm"].length, "right_leg_length": legs["xp"].length,
                 "touching_ground": grounded, "tire_force": dict(self.tire_force),
                 "mode": self.mode, "gear_down": self.gear_down, "leg_length_ref": self.length_ref,
+                "a_lat": self.a_lat, "yaw_limit": yaw_limit, "jump_phase": self.jump_phase,
                 "controls": controls}   # JOINT torques [N.m]
 
     # ---------------------------------------------------------------------------------------
@@ -415,7 +491,8 @@ class RepoControlPolicy:
         if self.mode == Mode.OPERATING:
             return command
         # standing up / landing / parked: stay in place, ignore the user's speed and turn rate
-        return RobotCommand(leg_length=self.length_ref, roll_angle=command.roll_angle, park=command.park)
+        return RobotCommand(leg_length=self.length_ref, roll_angle=command.roll_angle, park=command.park,
+                            max_accel=command.max_accel)
 
     def _set_gear(self, down):
         if down != self.gear_down:
@@ -423,13 +500,15 @@ class RepoControlPolicy:
 
     def _update_target(self, command, yaw, leg_length, dt):
         step_ratio = dt / 0.004
-        slope = max(0.003 * step_ratio, (-(leg_length - NOMINAL_LEG_LENGTH) * 0.02 + self.accel_step) * step_ratio)
+        scale = command.max_accel / 1.5          # 1.5 m/s^2 = accel_step per 4 ms at the nominal leg length
+        slope = max(0.003 * scale * step_ratio,
+                    (-(leg_length - NOMINAL_LEG_LENGTH) * 0.02 + self.accel_step) * scale * step_ratio)
         if command.brake:
             self.target_speed = 0.0
         else:
             err = command.speed_cmd - self.target_speed
             self.target_speed = command.speed_cmd if abs(err) < slope else self.target_speed + math.copysign(slope, err)
-        lead = self.brake_speed_lead if command.brake else self.speed_lead
+        lead = self.brake_speed_lead if command.brake else self.speed_lead * max(1.0, 0.75 * scale)
         self.target_position += self.target_speed * dt
         self.target_position = (self.x if command.brake else
                                 clamp(self.target_position, self.x - self.pos_lead, self.x + self.pos_lead))

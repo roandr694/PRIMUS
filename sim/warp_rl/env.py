@@ -77,18 +77,22 @@ def _shared_stream(device):
 
 
 class PrimusWarpEnv(VecEnv):
+    collision = "minimal"                # model.robot_spec collision set
+    nconmax, njmax = 24, 100             # MuJoCo Warp contact / constraint buffers
+
     def __init__(self, cfg: EnvCfg = EnvCfg(), device="cuda:0", seed=0, terrain=None):
         self.cfg = cfg
         self.device = torch.device(device)
         self.num_envs = N = cfg.num_envs
-        self.num_actions = C.NRES
+        self.num_actions = len(cfg.residual_scale)
         self.dt = 0.001 * cfg.decimation
         self.max_episode_length = int(cfg.episode_s / self.dt)
         self.gen = torch.Generator(device=self.device).manual_seed(seed)
 
         # ---------------- model and terrain ----------------
-        self.terrain = terrain or T.make_terrain(n_levels=cfg.terrain_levels, seed=seed)
-        self.mjm, self.spec = M.build(self.terrain)
+        self.terrain = terrain or self._make_terrain(seed)
+        self.mjm, self.spec = M.build(self.terrain, collision=self.collision)
+        self._patch_model(self.mjm)
         mjd = mujoco.MjData(self.mjm)
         mjd.qpos[:] = M.parked_qpos()
         mjd.qpos[0:2] = self.terrain["centers"][0, 0]      # flat tile of level 0
@@ -97,7 +101,7 @@ class PrimusWarpEnv(VecEnv):
         self.stream = _shared_stream(str(self.device))
         with wp.ScopedStream(self.stream):
             self.mw = mjw.put_model(self.mjm)
-            self.dw = mjw.put_data(self.mjm, mjd, nworld=N, nconmax=24, njmax=100)
+            self.dw = mjw.put_data(self.mjm, mjd, nworld=N, nconmax=self.nconmax, njmax=self.njmax)
             self._setup_randomization()
             self.ctl = C.BatchedController(self.mjm, N, str(self.device))
         tt = lambda a: wp.to_torch(a)
@@ -120,7 +124,7 @@ class PrimusWarpEnv(VecEnv):
 
         # ---------------- buffers ----------------
         z = lambda *s: torch.zeros(*s, device=self.device)
-        self.actions, self.last_actions = z(N, 6), z(N, 6)
+        self.actions, self.last_actions = z(N, self.num_actions), z(N, self.num_actions)
         self.episode_length_buf = torch.zeros(N, dtype=torch.long, device=self.device)
         self.cmd_timer, self.push_timer = z(N), z(N)
         self.level = torch.zeros(N, dtype=torch.long, device=self.device)
@@ -128,18 +132,44 @@ class PrimusWarpEnv(VecEnv):
         self.spawn_xy = z(N, 2)
         self.ep_speed_err, self.ep_steps_oper = z(N), z(N)
         self.ep_sums = {k: z(N) for k in cfg.rew}
-        self.frame_dim = 27
+        self.frame_dim = 21 + self.num_actions
         self.hist = z(N, cfg.history, self.frame_dim)
         self.scan_xy = torch.tensor([(x, y) for x in (-0.3, 0.0, 0.3) for y in (-0.6, -0.3, 0.0, 0.3, 0.6, 0.9, 1.2)],
                                     device=self.device)
         self.res_scale = torch.tensor(cfg.residual_scale, device=self.device)
         self.extras = {"log": {}}
         self.bad = torch.zeros(N, dtype=torch.bool, device=self.device)
+        self._init_buffers()
 
         self.level[:] = torch.randint(0, cfg.init_max_level + 1, (N,), generator=self.gen, device=self.device)
         self._reset(torch.arange(N, device=self.device))
         self._capture()
         self._compute_obs()
+
+    # ---- hooks for derived environments (skill_env.py) ----
+    def _make_terrain(self, seed):
+        return T.make_terrain(n_levels=self.cfg.terrain_levels, seed=seed)
+
+    def _patch_model(self, mjm):
+        pass
+
+    def _init_buffers(self):
+        pass
+
+    def _pre_physics(self):
+        pass
+
+    def _draw_types(self, ids):
+        if self.cfg.random_tile_type:
+            self.ttype[ids] = torch.randint(0, len(self.terrain["types"]), (len(ids),), generator=self.gen,
+                                            device=self.device)
+
+    def _spawn(self, ids):
+        """Start position and heading: around the tile centre."""
+        n = len(ids)
+        center = self.tile_centers[self.level[ids], self.ttype[ids]]
+        xy = center + self._rand(n * 2, -self.cfg.spawn_offset, self.cfg.spawn_offset).view(n, 2)
+        return xy, self._rand(n, -math.pi, math.pi)
 
     # ------------------------------------------------------------------------------------
     def _ids(self):
@@ -189,8 +219,8 @@ class PrimusWarpEnv(VecEnv):
         fr = np.tile(m.geom_friction[None], (N, 1, 1)).astype(np.float32)
         mu = rng.uniform(*cfg.friction_range, N).astype(np.float32)
         tires = [mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, f"wheel_{s}_tire") for s in ("xp", "xm")]
-        g = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "ground")
-        for i in tires + [g]:          # MuJoCo uses the larger friction of the pair: draw both equal
+        world = [i for i in range(m.ngeom) if m.geom_bodyid[i] == 0]
+        for i in tires + world:        # MuJoCo uses the larger friction of the pair: draw both equal
             fr[:, i, 0] = mu
         self.mw.geom_friction = wp.array(fr, dtype=wp.vec3)
         b = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "base")
@@ -238,17 +268,15 @@ class PrimusWarpEnv(VecEnv):
         self.cmd[ids, 2] = self._rand(n, *cfg.leg_range)
         self.cmd[ids, 3] = 0.0
         self.cmd[ids, 4] = 0.0
+        self.cmd[ids, 5] = 1.5                      # responsiveness: the original speed ramp
         self.cmd_timer[ids] = self._rand(n, *cfg.cmd_interval_s)
 
     def _reset(self, ids):
         if len(ids) == 0:
             return
         n, cfg = len(ids), self.cfg
-        if cfg.random_tile_type:
-            self.ttype[ids] = torch.randint(0, len(self.terrain["types"]), (n,), generator=self.gen, device=self.device)
-        center = self.tile_centers[self.level[ids], self.ttype[ids]]
-        xy = center + self._rand(n * 2, -cfg.spawn_offset, cfg.spawn_offset).view(n, 2)
-        yaw = self._rand(n, -math.pi, math.pi)
+        self._draw_types(ids)
+        xy, yaw = self._spawn(ids)
         ground = self._ground(xy)
         q = self.parked.repeat(n, 1)
         parked = torch.rand(n, generator=self.gen, device=self.device) < cfg.p_parked_start
@@ -336,13 +364,14 @@ class PrimusWarpEnv(VecEnv):
         cfg, N = self.cfg, self.num_envs
         self.last_actions.copy_(self.actions)
         self.actions.copy_(actions.clamp(-1, 1))
-        self.res.copy_(self.actions * self.res_scale)
+        self.res[:, :self.num_actions] = self.actions * self.res_scale
         # pushes: change the horizontal base velocity
         self.push_timer -= self.dt
         pushed = (self.push_timer <= 0).nonzero().flatten()
         if len(pushed):
             self.qvel[pushed, 0:2] += self._rand(len(pushed) * 2, -cfg.push_speed, cfg.push_speed).view(-1, 2)
             self.push_timer[pushed] = self._rand(len(pushed), *cfg.push_interval_s)
+        self._pre_physics()
         wp.capture_launch(self.graph, stream=self.stream)
         # a world that blew up numerically (rare; e.g. EPA failure in a heightfield contact) counts as a fall:
         # replace its state by a finite one before any computation and reset it at the end of the step

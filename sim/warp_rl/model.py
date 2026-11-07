@@ -9,6 +9,9 @@ changes:
 The ~70 convex hulls make ~20 contacts per robot and slow MuJoCo Warp down; against the heightfield every
 part is tested with every cell below it, so training uses collision="minimal" (tires + gear tips): falls
 are detected from the geometry (tilt/height) and end the episode.
+
+Collision bits: tires and gear tips touch everything; chassis and legs ("full") touch the plane and the box
+features (stairs, curbs, bars) but not the heightfield, whose cell-by-cell test overflows with large capsules.
 """
 from pathlib import Path
 
@@ -19,6 +22,8 @@ SIM = Path(__file__).resolve().parents[1]
 ROBOT_XML = SIM / "models" / "robo_bipedal.xml"
 FLAT_XML = SIM / "models" / "cena_plana.xml"
 COLLISION_GROUP = 3
+TOUCH_HFIELD, TOUCH_BOXES = 1, 4                # contype bits of the heightfield and of the box features
+TOUCH_ALL = TOUCH_HFIELD | TOUCH_BOXES
 
 
 def _body_hull_vertices(model):
@@ -57,11 +62,13 @@ def robot_spec(collision="minimal"):
     for geom in list(spec.geoms):
         if geom.group == COLLISION_GROUP and geom.type == mujoco.mjtGeom.mjGEOM_MESH:
             spec.delete(geom)
+        elif geom.name.endswith("_tire"):
+            geom.conaffinity = TOUCH_ALL
     for body in spec.bodies:
         if body.name not in verts:
             continue
         v = verts[body.name]
-        common = dict(group=COLLISION_GROUP, contype=2, conaffinity=1, density=0.0,
+        common = dict(group=COLLISION_GROUP, contype=2, conaffinity=TOUCH_ALL, density=0.0,
                       friction=[0.8, 0.02, 0.002], rgba=[0.8, 0.3, 0.3, 0.4])
         if body.name.startswith("gear"):
             p0, p1, r = _capsule(v)
@@ -71,10 +78,12 @@ def robot_spec(collision="minimal"):
         elif collision != "full":
             continue
         elif body.name == "base":
+            common["conaffinity"] = TOUCH_BOXES
             lo, hi = v.min(0), v.max(0)
             body.add_geom(name="base_box", type=mujoco.mjtGeom.mjGEOM_BOX, pos=(lo + hi) / 2,
                           size=(hi - lo) / 2, **common)
         else:
+            common["conaffinity"] = TOUCH_BOXES
             p0, p1, r = _capsule(v)
             body.add_geom(name=f"{body.name}_capsule", type=mujoco.mjtGeom.mjGEOM_CAPSULE,
                           fromto=np.concatenate([p0, p1]), size=[r, 0, 0], **common)
@@ -107,7 +116,7 @@ def build(terrain=None, timestep=0.001, collision="minimal"):
     spec.add_texture(name="sky", type=mujoco.mjtTexture.mjTEXTURE_SKYBOX,
                      builtin=mujoco.mjtBuiltin.mjBUILTIN_GRADIENT, width=256, height=256,
                      rgb1=[0.45, 0.62, 0.82], rgb2=[0.86, 0.90, 0.95])
-    ground = dict(contype=1, conaffinity=1, friction=[1.2, 0.02, 0.002], material="ground")
+    ground = dict(contype=TOUCH_ALL, conaffinity=0, friction=[1.2, 0.02, 0.002], material="ground")
     if terrain is None:
         world.add_geom(name="ground", type=mujoco.mjtGeom.mjGEOM_PLANE, size=[0, 0, 0.05], **ground)
     else:
@@ -117,5 +126,11 @@ def build(terrain=None, timestep=0.001, collision="minimal"):
                         size=[terrain["size_x"] / 2, terrain["size_y"] / 2, zmax, 0.1],
                         userdata=((h - h.min()) / zmax).ravel().tolist())
         world.add_geom(name="ground", type=mujoco.mjtGeom.mjGEOM_HFIELD, hfieldname="terrain",
-                       pos=[0, 0, float(h.min())], **ground)
+                       pos=[0, 0, float(h.min())], **{**ground, "contype": TOUCH_HFIELD})
+        for i, (c, sz) in enumerate(terrain.get("boxes", [])):          # sharp features (stairs, curbs, islands)
+            world.add_geom(name=f"box{i}", type=mujoco.mjtGeom.mjGEOM_BOX, pos=c, size=sz,
+                           **{**ground, "contype": TOUCH_BOXES})
+        for i, (c, sz) in enumerate(terrain.get("bars", [])):           # overhead bars
+            world.add_geom(name=f"bar{i}", type=mujoco.mjtGeom.mjGEOM_BOX, pos=c, size=sz,
+                           **{**ground, "contype": TOUCH_BOXES, "rgba": [0.8, 0.5, 0.2, 1]})
     return spec.compile(), spec

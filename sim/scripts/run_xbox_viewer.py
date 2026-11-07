@@ -3,7 +3,8 @@
     python3 scripts/run_xbox_viewer.py [--flat]        # macOS: mjpython scripts/run_xbox_viewer.py
 
 Left stick Y: speed | right stick X: turn | triggers or D-pad: leg height (latches, 0.18-0.52 m)
-A: soft stop | B: hard brake | X: land <-> stand up (the landing gear is automatic) | Start: restart.
+A: soft stop | B: hard brake | X: land <-> stand up (the landing gear is automatic) | Start: restart
+LB / RB: responsiveness smooth <-> normal <-> sport.
 If your gamepad maps differently, check the indices with scripts/inspect_gamepad.py.
 """
 import argparse
@@ -50,7 +51,8 @@ class Gamepad:
                     yaw=self._axis(a.yaw_axis) * (-1 if a.no_invert_yaw else 1),
                     up=trigger(a.right_trigger_axis) + max(dpad, 0.0), down=trigger(a.left_trigger_axis) + max(-dpad, 0.0),
                     stop=self._button(a.stop_button), brake=self._button(a.brake_button),
-                    park=self._button(a.gear_button), reset=self._button(a.reset_button))
+                    park=self._button(a.gear_button), reset=self._button(a.reset_button),
+                    slower=self._button(a.slower_button), faster=self._button(a.faster_button))
 
 
 def main():
@@ -59,7 +61,8 @@ def main():
     ap.add_argument("--max-speed", type=float, default=1.5, help="[m/s]")
     ap.add_argument("--max-yaw-rate", type=float, default=1.8, help="[rad/s]")
     for name, default in (("speed-axis", 1), ("yaw-axis", 2), ("left-trigger-axis", 4), ("right-trigger-axis", 5),
-                          ("stop-button", 0), ("brake-button", 1), ("gear-button", 2), ("reset-button", 7)):
+                          ("stop-button", 0), ("brake-button", 1), ("gear-button", 2), ("reset-button", 7),
+                          ("slower-button", 4), ("faster-button", 5)):
         ap.add_argument(f"--{name}", type=int, default=default)
     ap.add_argument("--no-invert-speed", action="store_true")
     ap.add_argument("--no-invert-yaw", action="store_true", help="by default stick right = turn right")
@@ -73,7 +76,10 @@ def main():
     with mujoco.viewer.launch_passive(model, data) as viewer:
         while viewer.is_running():
             start = time.time()
+            level = pilot.level
             command, reset = pilot.command(pad.read(), model.opt.timestep)
+            if pilot.level != level:
+                print(f"responsiveness: {pilot.level_name}")
             if reset:
                 rm.reset(mujoco, model, data)
                 policy.reset(data)

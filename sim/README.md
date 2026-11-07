@@ -12,12 +12,14 @@ All commands run **from `sim/`**. Install once with `python3 -m pip install -r r
 
 The robot starts **parked** (legs at 0.18 m, resting on its landing gear) and stands up by itself: it raises the
 legs, retracts the gear once still, and then follows the commands. "Land" makes it stop, lower the gear and
-descend onto it. Leg height goes from 0.18 to 0.52 m.
+descend onto it. Leg height goes from 0.18 to 0.52 m. The responsiveness level sets how fast the robot reaches
+the speed the stick asks for (0 → 1.5 m/s in about 2.7 / 1.2 / 0.7 s).
 
 ```bash
 python3 scripts/run_viewer.py [--flat]          # viewer, zero command
 python3 scripts/run_xbox_viewer.py [--flat]     # Xbox / SDL gamepad
-python3 scripts/run_quest_viewer.py [--flat]    # Meta Quest 3 over Wi-Fi
+python3 scripts/run_quest_viewer.py [--flat]    # Meta Quest 3 over Wi-Fi (or a desktop browser + Xbox pad)
+python3 scripts/run_quest_viewer.py --world skills --tile stairs --level 3 --start foot [--policy <exported>]
 ```
 
 | action | Xbox | Meta Quest 3 | keyboard (Quest page in a desktop browser) |
@@ -25,18 +27,32 @@ python3 scripts/run_quest_viewer.py [--flat]    # Meta Quest 3 over Wi-Fi
 | speed (up to 1.5 m/s) | left stick Y | left stick | W / S |
 | turn | right stick X | right stick | A / D |
 | leg height (latches) | triggers or D-pad | triggers | E / Q |
-| hard brake | B | A | space |
-| soft stop | A | B | – |
+| hard brake (and cancel a skill) | B | B | space |
+| start the offered skill | A (in the browser) | A | Enter |
+| edge guard on / off | Back (in the browser) | hold B 1 s | G |
+| soft stop | Y in the browser (A in `run_xbox_viewer.py`) | – | – |
 | land ↔ stand up | X | X | P |
 | restart | Start | Y | R |
+| responsiveness smooth / normal / sport | LB / RB | left / right stick click | 1 / 2 / 3 |
 
 If your gamepad maps differently, find the indices with `python3 scripts/inspect_gamepad.py` and pass them to
 `run_xbox_viewer.py` (`--speed-axis`, `--brake-button`, ...).
 
+**Autonomy** (Quest viewer and its page in a desktop browser, where an Xbox controller works through the
+Gamepad API): the simulated D435i depth camera and RPLIDAR A1 feed the elevation map
+([`../perception/`](../perception/README.md)). The edge guard (on by default) stops the robot before drops,
+stairs, gaps, low bars and obstacles; when a skill is offered on the panel ("stairs down 5x13 cm at 1.1 m - A to
+descend"), A starts it: the robot aligns and crosses (with `--policy` the skill policy drives during the skill,
+otherwise only the model-based controller). `--world skills` uses the skill terrain (stairs, curbs, gaps, bars at
+six difficulty levels); `--no-autonomy` turns it all off. With `--recovery <exported stand-up policy>` a fall no longer restarts the
+simulation: the panel asks for X, and X makes the robot stand back up (then it parks and stands up as usual). `run_xbox_viewer.py` (native window) keeps the plain
+pilot mapping without autonomy.
+
 **Meta Quest 3.** `run_quest_viewer.py` prints `https://<computer-ip>:8443`. On the Quest, on the same Wi-Fi, open
 it in the browser, accept the self-signed certificate warning (Advanced → proceed) and tap **Enter VR**. You get a
 large screen with the robot's first-person camera (chase camera in the corner) and a pilot panel (mode, gear,
-speed, turn rate, artificial horizon, leg height, torques, wheel contact, falls, real-time factor, ping). Both
+speed, turn rate, lateral acceleration, "turn limited" when the turn-rate envelope cuts the command, artificial
+horizon, leg height, torques, wheel contact, responsiveness level, falls, real-time factor, ping). Both
 grips re-centre the screen. Without headset input for 0.5 s the robot stops; after a fall the simulation
 restarts by itself in 4 s. Needs `aiohttp`, `pillow` and the system `openssl`; on macOS allow incoming
 connections for Python if the firewall asks. Lower `--width/--height/--quality` if the Wi-Fi struggles.
@@ -51,6 +67,8 @@ python3 scripts/analyze_balance.py --flat --imu mahony --imu-noise      # realis
 python3 scripts/analyze_balance.py --flat --state sim                   # simulator ground truth instead of sensors
 python3 scripts/analyze_balance.py --flat --log 0.25                    # trajectory log for tuning
 python3 scripts/record_video.py ../docs/demo_arena.mp4                  # headless mp4 (needs ffmpeg)
+MUJOCO_GL=egl python3 scripts/perception_check.py                       # detection accuracy per feature/level
+MUJOCO_GL=egl python3 scripts/autonomy_sim.py --tile stairs --level 4 --start top   # guard / skill, scripted
 ```
 
 `--state robot` (default) uses only real-robot signals: IMU (`imu_quat`, `imu_gyro`, `imu_acc`), wheel-encoder
@@ -67,12 +85,14 @@ models/cena_plana.xml          flat scene (to measure the controller)
 models/meshes/, models/cad/    visual/collision meshes and mass properties from the CAD
 scripts/robot_model.py         load a scene, leg pose for a length, LQR model parameters, stand_up()
 scripts/pilot.py               gamepad/Quest/keyboard inputs -> RobotCommand (shared by the pilot scripts)
+scripts/skill_world.py         skill terrain / project scene + simulated D435i and RPLIDAR A1 + motor droop
+scripts/autonomy_sim.py, perception_check.py   autonomy stack tests (scripted pilot, detection accuracy)
 scripts/run_viewer.py, run_xbox_viewer.py, run_quest_viewer.py (+ quest_web/), inspect_gamepad.py
 scripts/check_model.py, analyze_balance.py, record_video.py
 scripts/generate_mjcf.py       writes the 3 XML files from models/cad + tools/robot_def.py
 scripts/generate_urdf.py       writes isaac/urdf/robo_bipedal.urdf + models/cad/loop_closures.json
 tools/                         CAD -> meshes/masses pipeline (Fusion scripts + build_assets.py)
-warp_rl/                       residual RL on the GPU (MuJoCo Warp + RSL-RL)
+warp_rl/                       RL on the GPU (MuJoCo Warp + RSL-RL): residual, skill teacher, stand-up
 isaac/                         URDF -> USD with closed loops, for Isaac Sim (on hold)
 ```
 

@@ -1,6 +1,9 @@
 """Trains the residual policy on the GPU (MuJoCo Warp + RSL-RL PPO).
 
     ~/test/isaac-rl/bin/python sim/warp_rl/train.py --num-envs 4096 --iterations 1500
+    ~/test/isaac-rl/bin/python sim/warp_rl/train.py --task skills --iterations 4000     # skill teacher (skill_env.py)
+    ~/test/isaac-rl/bin/python sim/warp_rl/train.py --task recovery --iterations 1500   # stand up after a fall
+    ~/test/isaac-rl/bin/python sim/warp_rl/train.py --task student --teacher <teacher run>/logs/model_3999.pt
 
 Each run creates experiments/<date>-warp-residual/ in the workspace (or in $PRIMUS_WORKSPACE): manifest
 (arguments, Git revision, diff), checkpoints and TensorBoard in logs/. At the end it runs the evaluation
@@ -42,6 +45,25 @@ PPO_CFG = {
                   "rnd_cfg": None, "symmetry_cfg": None},
 }
 
+# student: distilled from the skill teacher (DAgger: the student drives, the teacher labels the actions)
+DISTILL_CFG = {
+    "seed": 0,
+    "num_steps_per_env": 24,
+    "save_interval": 100,
+    "obs_groups": {"student": ["student"], "teacher": ["teacher"]},
+    "check_for_nan": True,
+    "logger": "tensorboard",
+    "student": {"class_name": "MLPModel", "hidden_dims": [512, 256, 128], "activation": "elu",
+                "obs_normalization": True,
+                "distribution_cfg": {"class_name": "GaussianDistribution", "init_std": 0.1, "std_type": "scalar"}},
+    "teacher": {"class_name": "MLPModel", "hidden_dims": [512, 256, 128], "activation": "elu",
+                "obs_normalization": True,
+                "distribution_cfg": {"class_name": "GaussianDistribution", "init_std": 0.3, "std_type": "scalar",
+                                     "std_range": [0.1, 0.5]}},
+    "algorithm": {"class_name": "Distillation", "num_learning_epochs": 1, "gradient_length": 15,
+                  "learning_rate": 5e-4, "max_grad_norm": 1.0, "loss_type": "mse", "optimizer": "adam"},
+}
+
 
 def git(*args):
     try:
@@ -56,20 +78,42 @@ def main():
     ap.add_argument("--iterations", type=int, default=1500)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", default="cuda:0")
-    ap.add_argument("--name", default="warp-residual")
+    ap.add_argument("--task", choices=("residual", "skills", "recovery", "student"), default="residual")
+    ap.add_argument("--teacher", default=None, help="--task student: the skill teacher checkpoint")
+    ap.add_argument("--resume", default=None, help="continue from this checkpoint (weights + optimiser)")
+    ap.add_argument("--name", default=None, help="run name (default: warp-residual / skill-teacher)")
     ap.add_argument("--no-eval", action="store_true")
     args = ap.parse_args()
 
     import torch
     from rsl_rl.runners import OnPolicyRunner
-    from env import EnvCfg, PrimusWarpEnv
+    if args.task == "skills":
+        from skill_env import SkillCfg as EnvCfg, SkillEnv as PrimusWarpEnv
+        args.name = args.name or "skill-teacher"
+        args.no_eval = True               # eval.py / render.py are for the residual task; see skill_eval.py
+    elif args.task == "recovery":
+        from recovery_env import RecoveryCfg as EnvCfg, RecoveryEnv as PrimusWarpEnv
+        args.name = args.name or "recovery"
+        args.no_eval = True
+    elif args.task == "student":
+        from student_env import StudentCfg as EnvCfg, StudentEnv as PrimusWarpEnv
+        args.name = args.name or "skill-student"
+        args.no_eval = True
+        assert args.teacher, "--task student needs --teacher <checkpoint>"
+    else:
+        from env import EnvCfg, PrimusWarpEnv
+        args.name = args.name or "warp-residual"
 
     run = WORKSPACE / "experiments" / f"{dt.datetime.now():%Y-%m-%d_%H-%M-%S}-{args.name}"
     run.mkdir(parents=True)
     (run / "tracked-changes.patch").write_text(git("diff", "HEAD"))
     cfg = EnvCfg(num_envs=args.num_envs)
-    ppo = copy.deepcopy(PPO_CFG)
+    ppo = copy.deepcopy(DISTILL_CFG if args.task == "student" else PPO_CFG)
     ppo["seed"] = args.seed
+    if args.task == "skills":                 # more authority: keep exploring (v1 collapsed to std 0.07)
+        ppo["actor"]["distribution_cfg"].update(init_std=0.3, std_range=[0.1, 0.5])
+    elif args.task == "recovery":             # not a residual: absolute joint targets, explore widely
+        ppo["actor"]["distribution_cfg"].update(init_std=0.5, std_range=[0.1, 0.8])
     manifest = dict(name=run.name, started=dt.datetime.now().isoformat(timespec="seconds"), args=vars(args),
                     git_revision=git("rev-parse", "HEAD").strip(), git_dirty=bool(git("status", "--porcelain").strip()),
                     untracked=git("ls-files", "--others", "--exclude-standard").split(),
@@ -79,12 +123,29 @@ def main():
 
     torch.manual_seed(args.seed)
     env = PrimusWarpEnv(cfg, device=args.device, seed=args.seed)
+    if args.task == "student":
+        from rsl_rl.runners import DistillationRunner
+        runner = DistillationRunner(env, copy.deepcopy(ppo), log_dir=str(run / "logs"), device=args.device)
+        runner.load(args.teacher)                      # PPO checkpoint -> teacher weights
+        manifest["teacher"] = str(Path(args.teacher).resolve())
+        t0 = time.time()
+        runner.learn(num_learning_iterations=args.iterations, init_at_random_ep_len=True)
+        manifest.update(status="trained", train_seconds=round(time.time() - t0, 1))
+        (run / "experiment.json").write_text(json.dumps(manifest, indent=2))
+        print(f"done: {run}")
+        return
     runner = OnPolicyRunner(env, copy.deepcopy(ppo), log_dir=str(run / "logs"), device=args.device)
     # start exactly from the model-based controller: residual mean = 0 (only the exploration noise)
     head = [m for m in runner.alg.actor.mlp if isinstance(m, torch.nn.Linear)][-1]
-    with torch.no_grad():
-        head.weight[:env.num_actions].zero_()
-        head.bias[:env.num_actions].zero_()
+    if args.resume:
+        runner.load(args.resume)
+        manifest["resumed_from"] = str(Path(args.resume).resolve())
+    else:
+        with torch.no_grad():
+            head.weight[:env.num_actions].zero_()
+            head.bias[:env.num_actions].zero_()
+            if args.task == "skills":
+                head.bias[8] = -0.3           # jump trigger: rare random jumps (a > 0.5 ~ 1 per 5 s) to discover them
     t0 = time.time()
     runner.learn(num_learning_iterations=args.iterations, init_at_random_ep_len=True)
     manifest.update(status="trained", train_seconds=round(time.time() - t0, 1),

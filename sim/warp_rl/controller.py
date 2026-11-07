@@ -15,6 +15,13 @@ RESIDUAL (per robot, physical units, only in OPERATING mode):
   [dth_xp, dth_xm] leg angle offsets [rad]: the mean shifts the LQR equilibrium (leans); the difference is the
                    reference of the leg synchronisation PID (one leg ahead of the other)
   [dT_xp, dT_xm]   torque added to each wheel [N.m at the joint]
+  [dF_xp, dF_xm]   force added along each leg [N] (jumps, tucking the legs); in the air the length offset also
+                   moves the retracted length
+  [jump]           > 0.5 starts the jump primitive (push the legs out, then tuck them; RepoControlPolicy)
+
+DRIVE (per robot, `drv`): joint torque limit [N.m] and joint no-load speed [rad/s]. With a no-load speed > 0 the
+available torque drops linearly with the joint speed in the direction of motion (DC motor; a model of the plant,
+not part of the controller). The default (joint limit of the model, no droop) is the numpy controller.
 """
 import math
 import sys
@@ -42,19 +49,21 @@ _STATE = ["mode", "gear_down", "gear_timer", "stable_time", "length_ref",
           "yaw_i", "len_i",                                    # yaw and leg-length PI integrals
           "L_xp", "L_xm", "ba_xp", "ba_xm",                    # leg length and angle (previous step)
           "tf_xp", "tf_xm", "air_xp", "air_xm",                # estimated normal force, time in the air
-          "z1_xp", "z1_xm", "z2_xp", "z2_xm", "ddz_xp", "ddz_xm"]
+          "z1_xp", "z1_xm", "z2_xp", "z2_xm", "ddz_xp", "ddz_xm",
+          "a_lat",                                             # filtered lateral (centripetal) acceleration
+          "jump_phase", "jump_t", "jump_cool"]                 # jump primitive (0 idle, 1 push, 2 tuck)
 S = {n: i for i, n in enumerate(_STATE)}
 NSTATE = len(_STATE)
 # ---- per-robot outputs: columns of `out` (for observations and rewards) ----
 _OUT = ["theta", "d_theta", "pitch", "roll", "yaw", "pitch_rate", "roll_rate", "yaw_rate", "x", "dx",
         "L_xp", "L_xm", "th_xp", "th_xm", "dL_xp", "dL_xm", "dth_xp", "dth_xm",
         "grounded", "tf_xp", "tf_xm", "protect",
-        "tau_hYp_xp", "tau_hYm_xp", "tau_hYp_xm", "tau_hYm_xm", "tau_w_xp", "tau_w_xm"]
+        "tau_hYp_xp", "tau_hYm_xp", "tau_hYp_xm", "tau_hYm_xm", "tau_w_xp", "tau_w_xm", "yaw_limit", "jump_phase"]
 O = {n: i for i, n in enumerate(_OUT)}
 NOUT = len(_OUT)
-# command: speed [m/s], yaw rate [rad/s], leg length [m], roll [rad], park (0/1)
-NCMD = 5
-NRES = 6
+# command: speed [m/s], yaw rate [rad/s], leg length [m], roll [rad], park (0/1), max accel [m/s^2]
+NCMD = 6
+NRES = 9
 
 for _n, _i in list(S.items()):
     globals()[f"S_{_n.upper()}"] = wp.constant(_i)
@@ -120,6 +129,23 @@ class Params:
     contact_min_force: float
     contact_lpf: float
     air_grace_s: float
+    # turning: load-transfer feed-forward and turn-rate envelope
+    robot_mass: float
+    wheel_track_half: float
+    com_a: float
+    com_b: float
+    load_transfer_gain: float
+    inner_load_min: float
+    tip_height_factor: float
+    a_lat_lpf: float
+    # jump primitive
+    jump_force: float
+    jump_ext_len: float
+    jump_push_max_s: float
+    jump_tuck_force: float
+    jump_tuck_len: float
+    jump_tuck_max_s: float
+    jump_cooldown_s: float
 
 
 def make_params(model, dt=None):
@@ -137,7 +163,6 @@ def make_params(model, dt=None):
     p.hip_p, p.hip_m, p.hip_mid = wp.vec2(*P["hipYp"]), wp.vec2(*P["hipYm"]), wp.vec2(*five_bar.hip_mid("xp"))
     p.arm_p, p.arm_m = sub("kneeYp", "hipYp"), sub("kneeYm", "hipYm")
     p.r_p, p.r_m = wp.length(sub("foot", "kneeYp")), wp.length(sub("foot", "kneeYm"))
-    p.hip_spacing = abs((L["xp"]["hipYp"][0] + L["xp"]["hipYm"][0]) - (L["xm"]["hipYp"][0] + L["xm"]["hipYm"][0])) / 2000.0
     p.qp_hipYp, p.qp_hipYm = pair(qp, "hip_Yp_{}"), pair(qp, "hip_Ym_{}")
     p.qv_hipYp, p.qv_hipYm, p.qv_kneeYp = pair(qv, "hip_Yp_{}"), pair(qv, "hip_Ym_{}"), pair(qv, "knee_Yp_{}")
     p.qv_wheel, p.qp_gear = pair(qv, "wheel_{}"), pair(qp, "gear_front", "gear_rear")
@@ -158,6 +183,14 @@ def make_params(model, dt=None):
                  "air_retract_length", "contact_lpf", "air_grace_s"):
         setattr(p, name, float(getattr(ref, name)))
     p.contact_min_force = ref.contact_min_force_n
+    p.robot_mass, p.wheel_track_half = ref.robot_mass, ref.wheel_track_half
+    p.com_a, p.com_b = ref.com_height_fit
+    p.hip_spacing = ref.hip_spacing
+    for name in ("load_transfer_gain", "inner_load_min", "tip_height_factor", "a_lat_lpf"):
+        setattr(p, name, float(getattr(ref, name)))
+    p.jump_force, p.jump_ext_len, p.jump_push_max_s = ref.jump_force, ref.jump_ext_length, ref.jump_push_max_s
+    p.jump_tuck_force, p.jump_tuck_len, p.jump_tuck_max_s = ref.jump_tuck_force, ref.jump_tuck_length, ref.jump_tuck_max_s
+    p.jump_cooldown_s = ref.jump_cooldown_s
     return p
 
 
@@ -238,6 +271,15 @@ def quat_rot(q: wp.quat):
 
 
 @wp.func
+def drive_clamp(tau: float, speed: float, lim: float, w0: float):
+    """torque limit with a linear torque-speed droop in the direction of motion (w0 <= 0: no droop)"""
+    l = lim
+    if w0 > 0.0 and tau * speed > 0.0:
+        l = lim * wp.max(0.0, 1.0 - wp.abs(speed) / w0)
+    return wp.clamp(tau, -l, l)
+
+
+@wp.func
 def pid_step(err: float, kp: float, ki: float, imax: float, omax: float, integ: float):
     """reference-firmware PI: returns (output, new integral)"""
     integ2 = wp.clamp(integ + err * ki, -imax, imax)
@@ -295,7 +337,7 @@ def reset_kernel(prm: Params, mask: wp.array(dtype=int), qpos: wp.array2d(dtype=
 def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
                    qpos: wp.array2d(dtype=float), qvel: wp.array2d(dtype=float),
                    sensordata: wp.array2d(dtype=float), qfrc_actuator: wp.array2d(dtype=float),
-                   cmd: wp.array2d(dtype=float), res: wp.array2d(dtype=float),
+                   cmd: wp.array2d(dtype=float), res: wp.array2d(dtype=float), drv: wp.array2d(dtype=float),
                    cs: wp.array2d(dtype=float), out: wp.array2d(dtype=float), ctrl: wp.array2d(dtype=float)):
     w = wp.tid()
     dt = prm.dt
@@ -423,10 +465,14 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
     r_dl = wp.vec2(0.0, 0.0)
     r_dth = wp.vec2(0.0, 0.0)
     r_dT = wp.vec2(0.0, 0.0)
+    r_dF = wp.vec2(0.0, 0.0)
+    trigger = False
     if operating:
+        trigger = res[w, 8] > 0.5
         r_dl = wp.vec2(res[w, 0], res[w, 1])
         r_dth = wp.vec2(res[w, 2], res[w, 3])
         r_dT = wp.vec2(res[w, 4], res[w, 5])
+        r_dF = wp.vec2(res[w, 6], res[w, 7])
 
     if mode == PARKED:
         length_ref = prm.park_len
@@ -459,6 +505,12 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
         speed_cmd = cmd[w, 0]
         yaw_cmd = cmd[w, 1]
     balancing = mode != PARKED
+    # turn-rate envelope: |v * yaw_rate| <= a_max(leg length) (RepoControlPolicy.apply)
+    h_com = prm.com_a * avg_len + prm.com_b
+    v_ref = wp.max(wp.max(wp.abs(dx), wp.abs(speed_cmd)), 0.3)
+    a_max = (0.5 - prm.inner_load_min) * 9.81 * (2.0 * prm.wheel_track_half) / (prm.tip_height_factor * h_com)
+    yaw_limit = a_max / v_ref
+    yaw_cmd = wp.clamp(yaw_cmd, -yaw_limit, yaw_limit)
 
     # ---------------- targets (RepoControlPolicy._update_target) ----------------
     target_position = cs[w, S_TARGET_POSITION]
@@ -467,7 +519,9 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
     theta_zero = cs[w, S_THETA_ZERO]
     if balancing:
         step_ratio = dt / 0.004
-        slope = wp.max(0.003 * step_ratio, (-(avg_len - prm.nominal_len) * 0.02 + prm.accel_step) * step_ratio)
+        scale = cmd[w, 5] / 1.5
+        slope = wp.max(0.003 * scale * step_ratio,
+                       (-(avg_len - prm.nominal_len) * 0.02 + prm.accel_step) * scale * step_ratio)
         err = speed_cmd - target_speed
         if wp.abs(err) < slope:
             target_speed = speed_cmd
@@ -475,7 +529,8 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
             target_speed = target_speed + wp.sign(err) * slope
         target_position = target_position + target_speed * dt
         target_position = wp.clamp(target_position, x - prm.pos_lead, x + prm.pos_lead)
-        target_speed = wp.clamp(target_speed, dx - prm.speed_lead, dx + prm.speed_lead)
+        lead = prm.speed_lead * wp.max(1.0, 0.75 * scale)
+        target_speed = wp.clamp(target_speed, dx - lead, dx + lead)
         if wp.abs(yaw_cmd) > 1.0e-3:
             target_yaw = yaw
         else:
@@ -519,9 +574,42 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
         T_side = wp.vec2(T + yaw_out, T - yaw_out) + r_dT
 
     # force along the leg: length + weight + roll
-    length_target = prm.air_retract_length
+    length_target = prm.air_retract_length + 0.5 * (r_dl[0] + r_dl[1])
     if grounded == 1 or not balancing:
         length_target = wp.clamp(length_ref, prm.min_len, prm.max_len)
+    # jump primitive: idle -> push (legs out at full force) -> tuck (legs in) -> idle (after a cooldown)
+    jphase = int(cs[w, S_JUMP_PHASE])
+    jt = cs[w, S_JUMP_T]
+    jcool = cs[w, S_JUMP_COOL]
+    if not operating:
+        jphase = 0
+    elif jphase == 0:
+        jcool += dt
+        if trigger and grounded == 1 and jcool >= prm.jump_cooldown_s and avg_len < prm.jump_ext_len - 0.05:
+            jphase = 1
+            jt = 0.0
+    elif jphase == 1:
+        jt += dt
+        if avg_len >= prm.jump_ext_len or jt >= prm.jump_push_max_s:
+            jphase = 2
+            jt = 0.0
+    else:
+        jt += dt
+        if (avg_len <= prm.jump_tuck_len + 0.02 and jt > 0.05) or jt >= prm.jump_tuck_max_s:
+            jphase = 0
+            jcool = 0.0
+    cs[w, S_JUMP_PHASE] = float(jphase)
+    cs[w, S_JUMP_T] = jt
+    cs[w, S_JUMP_COOL] = jcool
+    jump_f = float(0.0)
+    if jphase == 1:
+        length_target = prm.max_len
+        jump_f = prm.jump_force
+    elif jphase == 2:
+        length_target = prm.jump_tuck_len
+        jump_f = -prm.jump_tuck_force
+    half = 0.5 * wp.abs(Ls[0] - Ls[1])     # keep both legs inside [min, max] on uneven ground
+    length_target = wp.clamp(length_target, prm.min_len + half, prm.max_len - half)
     avg_dlen = 0.5 * (dLs[0] + dLs[1])
     len_sp = wp.clamp(12.0 * (length_target - avg_len), -1.0, 1.0)
     f_len, len_i = pid_step(len_sp - avg_dlen, 250.0, 0.2, 30.0, 140.0, cs[w, S_LEN_I])
@@ -532,7 +620,13 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
     bias = float(0.0)
     if grounded == 1 or not balancing:
         bias = prm.force_bias
-    F = wp.vec2(f_len + bias - roll_out, f_len + bias + roll_out)
+    a_raw = float(0.0)
+    if (grounded == 1 or not balancing) and balancing:
+        a_raw = dx * yaw_rate
+    a_lat = cs[w, S_A_LAT] + prm.a_lat_lpf * (a_raw - cs[w, S_A_LAT])
+    cs[w, S_A_LAT] = a_lat
+    f_lt = prm.load_transfer_gain * prm.robot_mass * a_lat * h_com / prm.hip_spacing    # centripetal load transfer
+    F = wp.vec2(f_len + bias - roll_out + f_lt + jump_f, f_len + bias + roll_out - f_lt + jump_f) + r_dF
     for s in range(2):
         if Ls[s] > prm.max_len:
             F[s] = F[s] - (Ls[s] - prm.max_len) * 2000.0
@@ -540,14 +634,16 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
     # virtual leg torque: LQR + leg synchronisation
     la_ref = r_dth[1] - r_dth[0]
     la_sp = wp.clamp(40.0 * (la_ref - (ths[1] - ths[0])), -8.0, 8.0)
-    la = wp.clamp(4.0 * (la_sp - (dths[1] - dths[0])), -25.0, 25.0)
+    k_sync = (avg_len / prm.nominal_len) * (avg_len / prm.nominal_len)     # ~ leg inertia about the hip
+    la = wp.clamp(4.0 * k_sync * (la_sp - (dths[1] - dths[0])), -25.0 * k_sync, 25.0 * k_sync)
     Tp_side = wp.vec2(Tp - la, Tp + la)          # (xp, xm)
     if not balancing:
         Tp_side = wp.vec2(-prm.park_leg_kp * bas[0] - prm.park_leg_kd * dbas[0],
                           -prm.park_leg_kp * bas[1] - prm.park_leg_kd * dbas[1])
 
     protect = wp.abs(theta) > 1.0471975512 or wp.abs(pitch) > 1.0471975512
-    lim = prm.joint_limit
+    lim = drv[w, 0]
+    w0 = drv[w, 1]
     for s in range(2):
         J = J0
         if s == 1:
@@ -561,9 +657,9 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
         if protect:
             th = wp.vec2(0.0, 0.0)
             tw = 0.0
-        t_hp = wp.clamp(th[0], -lim, lim)
-        t_hm = wp.clamp(th[1], -lim, lim)
-        tw = wp.clamp(tw, -lim, lim)
+        t_hp = drive_clamp(th[0], qvel[w, prm.qv_hipYp[s]], lim, w0)
+        t_hm = drive_clamp(th[1], qvel[w, prm.qv_hipYm[s]], lim, w0)
+        tw = drive_clamp(tw, qvel[w, prm.qv_wheel[s]], lim, w0)
         ctrl[w, prm.u_hipYp[s]] = t_hp / prm.gear_ratio
         ctrl[w, prm.u_hipYm[s]] = t_hm / prm.gear_ratio
         ctrl[w, prm.u_wheel[s]] = tw / prm.gear_ratio
@@ -593,6 +689,8 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
         out[w, O_DTH_XP + s] = dths[s]
         out[w, O_TF_XP + s] = cs[w, S_TF_XP + s]
     out[w, O_GROUNDED] = float(grounded)
+    out[w, O_YAW_LIMIT] = yaw_limit
+    out[w, O_JUMP_PHASE] = float(jphase)
     out[w, O_PROTECT] = wp.where(protect, 1.0, 0.0)
 
 
@@ -609,6 +707,8 @@ class BatchedController:
         self.cmd = wp.zeros((nworld, NCMD), dtype=float, device=device)
         self.res = wp.zeros((nworld, NRES), dtype=float, device=device)
         self.mask = wp.zeros(nworld, dtype=int, device=device)
+        # per-robot drive: (joint torque limit [N.m], no-load joint speed [rad/s], 0 = no droop)
+        self.drv = wp.array(np.tile([[self.prm.joint_limit, 0.0]], (nworld, 1)).astype(np.float32), device=device)
 
     def reset(self, d, mask=None):
         """mask: int array (nworld), 1 on the robots to reset; None = all."""
@@ -620,4 +720,4 @@ class BatchedController:
     def step(self, d):
         wp.launch(control_kernel, dim=self.nworld,
                   inputs=[self.prm, self.coeffs, d.qpos, d.qvel, d.sensordata, d.qfrc_actuator,
-                          self.cmd, self.res, self.cs, self.out, d.ctrl], device=self.device)
+                          self.cmd, self.res, self.drv, self.cs, self.out, d.ctrl], device=self.device)

@@ -1,6 +1,12 @@
 # PRIMUS control roadmap
 
-*Updated 2026-11-02.*
+*Updated 2026-11-06 (autonomous skills: see Part 2, roadmap item 4).*
+
+> **Pending: retrain the residual RL policy.** On 2026-11-06 the base controller changed (leg-sync gains scaled
+> with leg length, mean leg length shifted to keep both legs in range, configurable acceleration, turning
+> load-transfer feed-forward and turn-rate envelope). The v2 policy was trained on the old controller and now
+> hurts it (quick check, 720 robots × 20 s: model-based alone 0.267 → 0.188 falls/min; with the v2 policy
+> 0.033 → 0.108). Re-run `sim/warp_rl/train.py` and `eval.py` before relying on it.
 
 Control is layered. The **model-based** controller (LQR + VMC + PIDs) is the base: it balances, drives, turns,
 changes height and lands, and it is what will run first on the real robot. **RL** sits on top as a robustness
@@ -64,8 +70,10 @@ controller (wheels within 0.45%, hips within 2%). It can be piloted with an Xbox
 2. **Update the mass** of the built robot (somewhat below the CAD's 15.7 kg).
 3. **Port to the robot** (`robot/`): moteus drivers, IMU, the same `robot`-mode estimator and the 1 kHz loop;
    compare real logs with simulation.
-4. **Tune Q/R for tall legs** (0.45–0.52 m), where the leg is slower and the body higher; limit speed and turn
-   rate with leg height (0.52 m + 1.5 m/s + 1.8 rad/s together falls today).
+4. **Banking into turns** (lean the body inwards) to put more load on the inner wheel and allow tighter fast
+   turns; needs a design that respects the leg range at tall heights. (Done 2026-11-06: leg-sync gains scaled with
+   leg length, mean leg length shifted on uneven ground, three acceleration levels, load-transfer feed-forward and
+   turn-rate envelope.)
 5. **Contact estimator and active suspension** (gains currently zero) for rough ground.
 
 ---
@@ -125,11 +133,17 @@ environment (CPU MuJoCo, real robot).
 3. **More authority**: larger residual scales through curriculum; later a policy with absolute per-leg
    length/angle targets, distilled from model-based + residual, for manoeuvres beyond the linear model (e.g. a
    two-wheel push-off).
-4. **Perception and larger steps (Isaac)**: depth camera → point cloud → elevation map around the robot → height
-   samples in the policy; teacher-student training (perfect map for the teacher, noisy map + history for the
-   student). Carry over the Isaac post-mortem lessons. **Physical limit:** without hip abduction the robot cannot
-   walk one leg at a time for long; steps taller than the wheel radius (~10 cm) should be taken with both wheels
-   together in a crouch-and-extend push. The 0.18–0.52 m leg range helps.
+4. **Perception and autonomous skills — in progress (MuJoCo Warp, not Isaac).** Done: the perception stack
+   ([`perception/`](../perception/README.md): D435i → elevation map with memory → stairs / curbs / drops / gaps /
+   overhangs, RPLIDAR A1 obstacles, edge guard, skill offers, A to start, B to cancel), the skill terrain and the
+   teacher environment with a jump primitive in the controller (two-wheel crouch-and-extend push, as predicted:
+   the wheels clear 23–35 cm), teacher v1 (stairs down, gaps, curbs, bars; not stairs up), CPU runner and Quest
+   integration. Running: teacher v2 (jump primitive) and the stand-up-after-fall policy. Next: the student
+   (simulated D435i map, distilled from the teacher), then the robot. **Physical limit:** without hip abduction
+   the robot cannot walk one leg at a time; steps above the wheel radius (~10 cm) need the two-wheel jump.
+5. **Banking in fast turns** as a learned skill on top of the load-transfer feed-forward (turn commands in the
+   skill environment; reward on the inner-wheel load).
+6. **Front flip** — kept for later: the jump primitive plus a pitch rotation; needs the measured actuators first.
 
 **Rule:** every new policy is evaluated against the model-based controller alone on the same scenarios
 (`eval.py`), and only replaces it where it is better.

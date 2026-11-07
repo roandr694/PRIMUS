@@ -26,9 +26,15 @@ import robot_model as rm  # noqa: E402
 from repo_control_policy import RepoControlPolicy, RobotCommand  # noqa: E402
 
 PLAN = [(0.0, dict(park=True)), (1.0, {}), (5.0, dict(speed_cmd=0.6)), (8.0, dict(leg_length=0.52)),
-        (11.0, dict(leg_length=0.52, speed_cmd=0.5, yaw_speed_cmd=1.0)), (14.0, dict(leg_length=0.18)),
-        (17.0, dict(leg_length=0.18, speed_cmd=-0.5)), (19.0, dict(leg_length=0.40)), (21.0, dict(park=True))]
-T_END = 26.0
+        (11.0, dict(leg_length=0.52, speed_cmd=1.5, yaw_speed_cmd=1.8)), (14.0, dict(leg_length=0.18)),
+        (17.0, dict(leg_length=0.18, speed_cmd=-0.5)), (19.0, dict(leg_length=0.40)),
+        # policy action (dL, dth, dT, dF per leg): crouch + lean + one leg ahead, then a leg-force push
+        (20.0, dict(leg_length=0.40, speed_cmd=0.3, residual=(-0.06, -0.10, 0.05, -0.05, 0.5, -0.5, 0.0, 0.0, 0.0))),
+        (21.0, dict(leg_length=0.30, residual=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 40.0, 40.0, 0.0))),
+        (22.0, dict(leg_length=0.30, residual=(0.0,) * 8 + (1.0,))),           # jump primitive
+        (22.05, dict(leg_length=0.30)),
+        (24.0, dict(park=True))]
+T_END = 29.0
 
 
 def command_at(t):
@@ -56,10 +62,13 @@ class WarpOnCpuData:
 
     def step(self, data, cmd):
         self._push(data)
-        self.ctl.cmd.assign(np.array([[cmd.speed_cmd, cmd.yaw_speed_cmd, cmd.leg_length, cmd.roll_angle, float(cmd.park)]], np.float32))
+        self.ctl.cmd.assign(np.array([[cmd.speed_cmd, cmd.yaw_speed_cmd, cmd.leg_length, cmd.roll_angle, float(cmd.park),
+                                       cmd.max_accel]], np.float32))
+        self.ctl.res.assign(np.array([cmd.residual or (0.0,) * C.NRES], np.float32))
         wp.launch(C.control_kernel, dim=1, inputs=[self.ctl.prm, self.ctl.coeffs, self.qpos, self.qvel, self.sd, self.qfrc,
-                                                   self.ctl.cmd, self.ctl.res, self.ctl.cs, self.ctl.out, self.ctrl], device=self.device)
-        return self.ctrl.numpy()[0].astype(np.float64), int(self.ctl.cs.numpy()[0, C.S["mode"]])
+                                                   self.ctl.cmd, self.ctl.res, self.ctl.drv, self.ctl.cs, self.ctl.out, self.ctrl], device=self.device)
+        cs = self.ctl.cs.numpy()[0]
+        return self.ctrl.numpy()[0].astype(np.float64), int(cs[C.S["mode"]]), int(cs[C.S["jump_phase"]])
 
 
 def open_loop(device):
@@ -68,18 +77,24 @@ def open_loop(device):
     ref.reset(data)
     wctl = WarpOnCpuData(model, device)
     wctl.reset(data)
-    diffs, mags, mode_mismatch = [], [], 0
+    diffs, mags, mode_mismatch, jump_mismatch, jumping = [], [], 0, 0, []
     for k in range(int(T_END / model.opt.timestep)):
         cmd = command_at(k * model.opt.timestep)
         mujoco.mj_forward(model, data)
-        u_w, mode_w = wctl.step(data, cmd)
-        ref.apply(data, cmd)
+        u_w, mode_w, jump_w = wctl.step(data, cmd)
+        out = ref.apply(data, cmd)
         u_r = data.ctrl.copy()
         mode_mismatch += C.MODE_NAMES[mode_w] != ref.mode
+        jump_mismatch += jump_w != out["jump_phase"]
+        jumping.append(jump_w or out["jump_phase"])
         diffs.append((u_w - u_r) * 9.0)
         mags.append(u_r * 9.0)
         mujoco.mj_step(model, data)
-    diffs, mags = np.array(diffs)[:, :6], np.array(mags)[:, :6]
+    # a jump saturates the torques: a phase switch one step apart is a large but brief difference, so the
+    # torque comparison excludes the jump window (+0.3 s of landing); the phases are compared separately
+    jw = np.convolve(np.array(jumping, float), np.ones(300), mode="full")[:len(jumping)] > 0
+    print(f"  jump: {int(np.sum(np.array(jumping) > 0))} steps jumping, phase differs on {jump_mismatch}")
+    diffs, mags = np.array(diffs)[~jw, :6], np.array(mags)[~jw, :6]
     rms_d = np.sqrt((diffs ** 2).mean(0)); rms_m = np.sqrt((mags ** 2).mean(0))
     print("open loop: torque RMS [N.m at the joint] (numpy reference | warp - numpy)")
     names = [mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_ACTUATOR, i) for i in range(6)]
@@ -87,7 +102,7 @@ def open_loop(device):
         print(f"  {n:10s} {a:7.3f} | {b:7.4f}")
     print(f"  steps with a different mode: {mode_mismatch} of {len(diffs)}")
     rel = rms_d / np.maximum(rms_m, 0.5)
-    return float(rel[:4].max()), float(rel[4:].max()), mode_mismatch
+    return float(rel[:4].max()), float(rel[4:].max()), mode_mismatch, jump_mismatch
 
 
 def closed_loop(device):
@@ -98,7 +113,7 @@ def closed_loop(device):
     transitions = []
     for k in range(int(T_END / model.opt.timestep)):
         t = k * model.opt.timestep
-        u, mode = wctl.step(data, command_at(t))
+        u, mode, _ = wctl.step(data, command_at(t))
         data.ctrl[:] = u
         mujoco.mj_step(model, data)
         R = data.xmat[1].reshape(3, 3)
@@ -119,10 +134,10 @@ def closed_loop(device):
 if __name__ == "__main__":
     wp.init()
     device = "cuda:0" if wp.get_cuda_device_count() else "cpu"
-    rel_hip, rel_wheel, mism = open_loop(device)
+    rel_hip, rel_wheel, mism, jmism = open_loop(device)
     trans, fell = closed_loop(device)
     modes = [m for _, m in trans]
-    ok = (rel_hip < 0.03 and rel_wheel < 0.01 and mism < 50 and not fell
+    ok = (rel_hip < 0.03 and rel_wheel < 0.01 and mism < 50 and jmism < 10 and not fell
           and modes == ["parked", "standing_up", "operating", "landing", "parked"])
     print(f"\nworst relative difference: hips {rel_hip:.2%}, wheels {rel_wheel:.2%}  ->  {'PASS' if ok else 'FAIL'}")
     sys.exit(0 if ok else 1)
