@@ -8,18 +8,27 @@ The ground is a coarse heightfield (rough, slopes); sharp features are boxes so 
   curbs      raised platforms (curbs, single steps) 4-20 cm
   gaps       floor islands separated by trenches 10-45 cm wide (heightfield carved 0.5 m deep below)
   overhang   bars to pass under; bar bottom from 0.80 m (no need to crouch) down to 0.42 m
+  stairs_wide  the stairs with deeper treads that narrow with the level (0.50 m at level 0 -> 0.32 m at level 5):
+             room to learn to land and chain jumps, then the real depth (a training aid; real stairs are ~0.30)
+  hurdles    thin walls (bars/boxes to jump over, 6-24 cm high, 10 cm thick) in three square rings
+  gaps_wide  like gaps with trenches 30-80 cm wide: they need a real jump (run at speed, push, tuck)
+  stairs_long  8 steps (instead of 5) up to a small platform: the policy must not stop half way
 
 Besides the collision geometry it returns, for perception, a fine `ground` height grid and a `ceiling` grid
 (lowest overhead surface, +inf where open), both [nrow(y), ncol(x)] at `fine_res`.
 """
 import numpy as np
 
-TYPES = ("flat", "rough", "slope", "stairs", "curbs", "gaps", "overhang")
+TYPES = ("flat", "rough", "slope", "stairs", "curbs", "gaps", "overhang", "stairs_wide", "hurdles", "gaps_wide",
+         "stairs_long")
 STAIR_RISE = (0.04, 0.07, 0.10, 0.13, 0.16, 0.19)
 CURB_RISE = (0.04, 0.07, 0.10, 0.13, 0.17, 0.20)
 GAP_WIDTH = (0.10, 0.17, 0.24, 0.31, 0.38, 0.45)
+HURDLE_H = (0.06, 0.09, 0.12, 0.15, 0.19, 0.24)
+GAP_WIDE = (0.30, 0.40, 0.50, 0.60, 0.70, 0.80)
 BAR_BOTTOM = (0.80, 0.68, 0.60, 0.52, 0.46, 0.42)
 TREAD = 0.30
+TREAD_WIDE = (0.50, 0.46, 0.42, 0.38, 0.35, 0.32)    # stairs_wide tread per level
 STAIR_HALF = 2.9                # half size of the bottom step: leaves a 1.1 m run-up inside the tile
 
 
@@ -38,7 +47,7 @@ def _hfield_tile(kind, lv, n, res, rng):
         grade = np.tan(np.radians(2.0 + 13.0 * d))
         r = np.maximum(np.abs(X), np.abs(Y))
         return grade * np.clip(half - np.maximum(r, 0.25 * half), 0, None)
-    if kind == "gaps":
+    if kind in ("gaps", "gaps_wide"):
         return np.full((n, n), -0.5)            # everything is a pit; the walkable floor is boxes
     return np.zeros((n, n))
 
@@ -46,10 +55,11 @@ def _hfield_tile(kind, lv, n, res, rng):
 def _box_tile(kind, lv, cx, cy, rng):
     """Boxes (center xyz, half sizes xyz) of a tile centred at (cx, cy); `bars` are overhead."""
     boxes, bars = [], []
-    if kind == "stairs":
+    if kind in ("stairs", "stairs_wide", "stairs_long"):
         r = STAIR_RISE[lv]
-        for k in range(1, 6):
-            s = STAIR_HALF - (k - 1) * TREAD
+        tread = TREAD_WIDE[lv] if kind == "stairs_wide" else TREAD
+        for k in range(1, 9 if kind == "stairs_long" else 6):
+            s = STAIR_HALF - (k - 1) * tread
             boxes.append(((cx, cy, k * r / 2), (s, s, k * r / 2)))
     elif kind == "curbs":
         h = CURB_RISE[lv]
@@ -58,8 +68,14 @@ def _box_tile(kind, lv, cx, cy, rng):
             sx, sy = rng.uniform(0.5, 0.9, 2)
             boxes.append(((px, py, h / 2), (sx, sy, h / 2)))
         boxes.append(((cx, cy, h / 2), (0.8, 0.8, h / 2)))          # a platform in the middle too
-    elif kind == "gaps":
-        g, t = GAP_WIDTH[lv], 0.25                              # gap width, slab half thickness
+    elif kind == "hurdles":
+        h = HURDLE_H[lv]
+        for rad in (1.5, 2.4, 3.3):
+            for (ox, oy, sx, sy) in ((0, rad, rad + 0.05, 0.05), (0, -rad, rad + 0.05, 0.05),
+                                     (rad, 0, 0.05, rad + 0.05), (-rad, 0, 0.05, rad + 0.05)):
+                boxes.append(((cx + ox, cy + oy, h / 2), (sx, sy, h / 2)))
+    elif kind in ("gaps", "gaps_wide"):
+        g, t = (GAP_WIDTH if kind == "gaps" else GAP_WIDE)[lv], 0.25                              # gap width, slab half thickness
         boxes.append(((cx, cy, -t), (0.9, 0.9, t)))              # centre island
         inner = 0.9
         while inner < 3.9:                                      # rings of 4 boxes separated by gaps

@@ -104,7 +104,7 @@ def start_pose(ter, tile, level, start):
 
 
 class SkillWorld:
-    def __init__(self, scene="skills", torque=20.0, seed=0, extra_cameras=()):
+    def __init__(self, scene="skills", torque=20.0, seed=0, extra_cameras=(), torque_lag=0.002, power_limit=700.0):
         import robot_model as rm
         self.scene = scene
         if scene == "skills":
@@ -116,6 +116,7 @@ class SkillWorld:
         else:
             self.ter = None
             spec = mujoco.MjSpec.from_file(str(rm.FLAT_MODEL_PATH if scene == "flat" else rm.MODEL_PATH))
+            M.apply_hip_limits(spec)
         for name, pos, fovy, tilt in extra_cameras:                # e.g. the pilot's first-person camera
             t = math.radians(tilt)
             spec.body("base").add_camera(name=name, pos=list(pos), fovy=fovy, xyaxes=[1, 0, 0, 0, math.sin(t), math.cos(t)])
@@ -129,6 +130,8 @@ class SkillWorld:
         self.wheel_dof = [int(m.jnt_dofadr[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"wheel_{s}")])
                           for s in ("xp", "xm")]
         self.truth = TruthTerrain(self.ter) if self.ter is not None else None
+        self.torque_lag, self.power_limit = torque_lag, power_limit
+        self.tau = np.zeros(len(self.act_dof))                    # applied torques (lag state)
 
     def place(self, tile="flat", level=0, start="center"):
         d = self.data
@@ -141,6 +144,7 @@ class SkillWorld:
             else:
                 rm.reset(mujoco, self.model, d)
             return
+        self.tau[:] = 0.0
         mujoco.mj_resetData(self.model, d)
         d.qpos[:] = M.parked_qpos()
         xy, h = start_pose(self.ter, tile, level, start)
@@ -157,12 +161,20 @@ class SkillWorld:
         return float(self.data.site_xpos[self.wheels, 2].mean() - wheel_radius)
 
     def drive_limits(self):
-        """Motor torque-speed droop on the hip/wheel actuators (plant model, as in the training kernel)."""
-        d = self.data
-        for a, dof in self.act_dof:
+        """Plant model of the hip/wheel drives, as in the training kernel: torque-speed droop, torque lag
+        (current loop + CAN) and the battery power limit shared by the motors doing positive work."""
+        d, dt = self.data, self.model.opt.timestep
+        alpha = dt / (self.torque_lag + dt)
+        p_pos = 0.0
+        for i, (a, dof) in enumerate(self.act_dof):
             tau, w = d.ctrl[a] * 9.0, d.qvel[dof]
             lim = self.torque * max(0.0, 1.0 - abs(w) / W0) if tau * w > 0 else self.torque
-            d.ctrl[a] = max(-lim, min(lim, tau)) / 9.0
+            self.tau[i] += alpha * (max(-lim, min(lim, tau)) - self.tau[i])
+            p_pos += max(0.0, self.tau[i] * w)
+        k = min(1.0, self.power_limit / p_pos) if p_pos > 0 else 1.0
+        for i, (a, dof) in enumerate(self.act_dof):
+            t = self.tau[i] * (k if self.tau[i] * d.qvel[dof] > 0 else 1.0)
+            d.ctrl[a] = t / 9.0
 
     def policy_inputs(self, ctl, out, autonomy, scan="truth"):
         """SkillPolicy.act arguments. scan: "truth" (as the teacher trained) or "map" (the elevation map)."""

@@ -56,6 +56,7 @@ def main():
     ap.add_argument("--torque", type=float, default=None, help="fixed joint torque limit (default: random 18-25)")
     ap.add_argument("--student", action="store_true", help="the checkpoint is a distilled student (camera map)")
     ap.add_argument("--recurrent", action="store_true", help="the student has a GRU")
+    ap.add_argument("--arch", choices=("mlp", "encoders"), default="mlp", help="teacher network (train.py --arch)")
     ap.add_argument("--out", default=None)
     ap.add_argument("--device", default="cuda:0")
     args = ap.parse_args()
@@ -78,28 +79,28 @@ def main():
     policies = [("controller", None)]
     if args.checkpoint:
         from rsl_rl.runners import DistillationRunner, OnPolicyRunner
-        from train import DISTILL_CFG, PPO_CFG, recurrent_student
+        from train import DISTILL_CFG, PPO_CFG, recurrent_student, skill_ppo
         if args.student:
             dcfg = copy.deepcopy(DISTILL_CFG)
             if args.recurrent:
                 dcfg["student"] = recurrent_student()
             runner = DistillationRunner(env, dcfg, log_dir=None, device=args.device)
         else:
-            ppo = copy.deepcopy(PPO_CFG)
-            ppo["actor"]["distribution_cfg"].update(init_std=0.3, std_range=[0.1, 0.5])
-            runner = OnPolicyRunner(env, ppo, log_dir=None, device=args.device)
+            runner = OnPolicyRunner(env, skill_ppo(env, args.arch), log_dir=None, device=args.device)
         runner.load(args.checkpoint)
         policies.append(("policy", runner.get_inference_policy(device=args.device)))
     results = {}
     for name, pol in policies:
         ok, fell, dist, climb, gained = run(env, pol, args.seconds, args.distance)
         import skill_terrain as ST
-        st = env.ttype == types.index("stairs")
-        steps = [float((gained[st & climb & (env.level == lv)] / ST.STAIR_RISE[lv]).mean()) for lv in range(L)]
-        print(f"  {name:10s} stairs up, steps climbed (of 5) per level: " + " ".join(f"{v:4.1f}" for v in steps))
+        for tn in [t for t in types if t.startswith("stairs")]:
+            st = env.ttype == types.index(tn)
+            steps = [float((gained[st & climb & (env.level == lv)] / ST.STAIR_RISE[lv]).mean()) for lv in range(L)]
+            print(f"  {name:10s} {tn} up, steps climbed (of 5; 8 on stairs_long) per level: " + " ".join(f"{v:4.1f}" for v in steps))
         rows = {}
         for t, tname in enumerate(types):
-            for sub, mask in (((tname + " up", climb), (tname + " down", ~climb)) if tname == "stairs" else ((tname, None),)):
+            for sub, mask in (((tname + " up", climb), (tname + " down", ~climb)) if tname.startswith("stairs")
+                              else ((tname, None),)):
                 vals = []
                 for lv in range(L):
                     sel = (env.ttype == t) & (env.level == lv)

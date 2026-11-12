@@ -21,10 +21,11 @@ def main():
     ap.add_argument("--task", choices=("residual", "skills", "recovery", "student"), default="skills")
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--recurrent", action="store_true", help="student checkpoint with a GRU")
+    ap.add_argument("--arch", choices=("mlp", "encoders"), default="mlp", help="skills teacher network")
     args = ap.parse_args()
 
     from rsl_rl.runners import DistillationRunner, OnPolicyRunner
-    from train import DISTILL_CFG, PPO_CFG, recurrent_student
+    from train import DISTILL_CFG, PPO_CFG, recurrent_student, skill_ppo
     if args.task == "skills":
         from skill_env import SkillCfg as Cfg, SkillEnv as Env
     elif args.task == "recovery":
@@ -42,6 +43,8 @@ def main():
         ppo["actor"]["distribution_cfg"].update(init_std=0.3, std_range=[0.1, 0.5])
     elif args.task == "recovery":
         ppo["actor"]["distribution_cfg"].update(init_std=0.5, std_range=[0.1, 0.8])
+    if args.task == "skills":
+        ppo = skill_ppo(env, args.arch, ppo)
     runner = (DistillationRunner if args.task == "student" else OnPolicyRunner)(env, ppo, log_dir=None, device=args.device)
     runner.load(args.checkpoint)
     out = Path(args.checkpoint).resolve().parents[1] / "exported"

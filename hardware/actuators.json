@@ -23,5 +23,47 @@
     "gearbox_efficiency": null,
     "backlash_rad": null,
     "battery_mass_kg": null
+  },
+  "estimates_2026_11_10": {
+    "note": "Estimates for the simulator, not measured (owner's setup: 6 x moteus r4.11, mjbots power_dist r4.5b, 24 V 3 Ah drill battery, Jetson / Raspberry Pi 5)",
+    "moteus_r4_11": {
+      "input_v": "10-44",
+      "peak_phase_current_a": 100,
+      "peak_power_w": "900 (<= 30 V)",
+      "pwm_khz": 30
+    },
+    "power_dist_r4_5b": {
+      "continuous_a": 45,
+      "peak_a": 90
+    },
+    "battery_24v_3ah": {
+      "assumed_continuous_a": "20-30",
+      "assumed_peak_a": "40-60",
+      "sag": "voltage drops under load -> no-load speed 0.8-1.05 x nominal"
+    },
+    "motor": {
+      "kv_rpm_per_v": 130,
+      "torque_constant_joint_nm_per_a": 0.573,
+      "joint_no_load_speed_rad_s_at_24v": 36.3,
+      "phase_current_for_20nm_a": 35
+    },
+    "simulator_ranges": {
+      "joint_torque_limit_nm": "18-25",
+      "total_power_limit_w": "500-900",
+      "torque_lag_s": "0.001-0.004 (current loop + CAN-FD)",
+      "policy_action_delay_ms": "0-10 (inference + communication)",
+      "gearbox_friction_nm": "0.05-0.3"
+    },
+    "hip_range_deg_from_cad_pose": {
+      "hip_Yp": [
+        -49,
+        118
+      ],
+      "hip_Ym": [
+        -124,
+        47
+      ],
+      "source": "5-bar must not fold through itself (arm never past pointing down); swept with the CAD collision hulls"
+    }
   }
 }

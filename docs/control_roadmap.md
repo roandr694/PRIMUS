@@ -1,6 +1,6 @@
 # PRIMUS control roadmap
 
-*Updated 2026-11-06 (autonomous skills: see Part 2, roadmap item 4).*
+*Updated 2026-11-11. Current status and next steps: [status_and_plan.md](status_and_plan.md); experiment history and reasoning: [experiments.md](experiments.md).*
 
 > **Pending: retrain the residual RL policy.** On 2026-11-06 the base controller changed (leg-sync gains scaled
 > with leg length, mean leg length shifted to keep both legs in range, configurable acceleration, turning
@@ -141,6 +141,24 @@ environment (CPU MuJoCo, real robot).
    integration. Running: teacher v2 (jump primitive) and the stand-up-after-fall policy. Next: the student
    (simulated D435i map, distilled from the teacher), then the robot. **Physical limit:** without hip abduction
    the robot cannot walk one leg at a time; steps above the wheel radius (~10 cm) need the two-wheel jump.
+   **Skills plan (agreed 2026-11-07):**
+   1. *Now:* teacher v6 (adds 0.50 m-tread stairs: room to land and learn to chain jumps; resumed from v5) and a
+      GRU camera student from v5. Evaluate: steps climbed on the real 30 cm treads, student vs teacher.
+   2. *Stairs up:* if v6 chains jumps on wide treads, narrow the treads with the curriculum (0.50 → 0.30 m); if
+      not, a curriculum on the number of steps (1–2 tall steps first, then whole flights).
+   3. *Jump freedom:* the primitive fixes the push / tuck profile (the policy keeps timing, speed, pitch, leg
+      angles in the air, extra leg force, landing length after the tuck, and the jump shape). Open it up:
+      (a) the policy modulates the leg length during push / tuck instead of being overridden, or (b) the
+      primitive as training wheels, faded out during training while the policy does the jump with direct
+      actions (more leg-force authority). A pure no-primitive policy is not expected to find the jump.
+   **Update 2026-11-11:** v7 (from scratch, encoders) and v8 (realistic hips and motors) were done; v8 never uses the
+   jump, so v9 injects hops near step edges (see [experiments.md](experiments.md)). Items 1–2 above are superseded.
+   4. *Retrain from scratch* with the final action space, rewards and terrains (the continued versions may carry
+      habits; gaps may gain from forward jumps); ~6000 iterations; compare with the best continued teacher on
+      the same evaluation and keep the winner.
+   5. *Final student* (GRU, camera map, body pitch to look) distilled from the winner; full-stack CPU tests
+      (viewer, guard, A / B, X stand-up); then the robot: sensor drivers (librealsense, rplidar; lidar 0°
+      offset), odometry for the map, ONNX on the Jetson, reduced authority first.
 5. **Banking in fast turns** as a learned skill on top of the load-transfer feed-forward (turn commands in the
    skill environment; reward on the inner-wheel load).
 6. **Front flip** — kept for later: the jump primitive plus a pitch rotation; needs the measured actuators first.

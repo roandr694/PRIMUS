@@ -33,7 +33,7 @@ regenerating from CAD) is in [`sim/README.md`](sim/README.md). GPU reinforcement
 | [`sim/isaac/`](sim/isaac/) | URDF → USD with closed loops for Isaac Sim (for the future perception work) | on hold |
 | [`hardware/`](hardware/) | actuator data and assumptions; CAD exports, BOM and wiring to come | partial |
 | [`robot/`](robot/) | software for the physical robot (drivers, estimation, sim-to-real) | to be filled |
-| [`docs/`](docs/) | [model and controller notes](docs/model_and_control.md), [control roadmap](docs/control_roadmap.md), [Isaac post-mortem](docs/terrain-run-2026-10-31.md), [workspace conventions](docs/workspace.md), history of the earlier prototype | |
+| [`docs/`](docs/) | [model and controller notes](docs/model_and_control.md), [control roadmap](docs/control_roadmap.md), [Isaac post-mortem](docs/terrain-run-2026-10-31.md), [workspace conventions](docs/workspace.md), [experiment log](docs/experiments.md), [status and plan](docs/status_and_plan.md), history of the earlier prototype | |
 
 ## Robot at a glance
 
@@ -67,6 +67,6 @@ regenerating from CAD) is in [`sim/README.md`](sim/README.md). GPU reinforcement
 - [x] Isaac Sim USD conversion with closed loops
 - [ ] actuator characterisation (peak torque, speed, rotor inertia); current values are placeholders
 - [ ] real-robot drivers and state estimation (`robot/`), sim-to-real of controller and policy
-- [ ] larger steps with perception (depth camera / elevation map), back in Isaac
+- [ ] autonomous skills with perception (stairs, curbs, gaps, hops): teacher v8 done, v9 (hops) training, student and robot next; see [status and plan](docs/status_and_plan.md) and the [experiment log](docs/experiments.md)
 
 The workspace around this repository (experiments, videos, caches) is described in [docs/workspace.md](docs/workspace.md).

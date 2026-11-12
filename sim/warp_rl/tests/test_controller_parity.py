@@ -71,7 +71,7 @@ class WarpOnCpuData:
         r = tuple(cmd.residual or ()) + (0.0,) * C.NRES
         self.ctl.res.assign(np.array([r[:C.NRES]], np.float32))
         wp.launch(C.control_kernel, dim=1, inputs=[self.ctl.prm, self.ctl.coeffs, self.qpos, self.qvel, self.sd, self.qfrc,
-                                                   self.ctl.cmd, self.ctl.res, self.ctl.drv, self.ctl.cs, self.ctl.out, self.ctrl], device=self.device)
+                                                   self.ctl.cmd, self.ctl.res, self.ctl.resp, self.ctl.drv, self.ctl.cs, self.ctl.out, self.ctrl], device=self.device)
         cs = self.ctl.cs.numpy()[0]
         return self.ctrl.numpy()[0].astype(np.float64), int(cs[C.S["mode"]]), int(cs[C.S["jump_phase"]])
 

@@ -37,9 +37,9 @@ class SkillCfg(EnvCfg):
     episode_s: float = 20.0               # a whole flight of stairs fits
     # residual = action x scale + offset: [dL_xp, dL_xm] m, [dth_xp, dth_xm] rad, [dT_xp, dT_xm] N.m,
     # [dF_xp, dF_xm] N, jump trigger, jump extension [m], push [N], tuck length [m]
-    residual_scale: tuple = (0.17, 0.17, 0.5, 0.5, 4.0, 4.0, 150.0, 150.0, 1.0, 0.06, 75.0, 0.07)
-    residual_offset: tuple = (0.0,) * 9 + (0.46, 225.0, 0.25)
-    p_climb: float = 0.7                  # stairs tiles: share of robots starting at the foot (else on top)
+    residual_scale: tuple = (0.17, 0.17, 0.35, 0.35, 4.0, 4.0, 150.0, 150.0, 1.0, 0.06, 60.0, 0.07)
+    residual_offset: tuple = (0.0,) * 9 + (0.46, 190.0, 0.25)       # push 130-250 N
+    p_climb: float = 0.5                  # stairs tiles: share of robots starting at the foot (else on top)
     history: int = 3
     # commands: forward speed, heading (-> yaw rate), preferred leg length
     speed_range: tuple = (0.3, 1.2)
@@ -53,14 +53,20 @@ class SkillCfg(EnvCfg):
     p_parked_start: float = 0.1
     push_speed: float = 0.3
     # tile type probabilities, in skill_terrain.TYPES order
-    type_weights: tuple = (0.08, 0.08, 0.09, 0.25, 0.17, 0.17, 0.16)
+    type_weights: tuple = (0.04, 0.04, 0.05, 0.14, 0.08, 0.10, 0.09, 0.10, 0.10, 0.10, 0.16)
+    fast_speed: tuple = (0.8, 1.6)        # hurdles / wide gaps: a run-up is needed to jump them
     torque_range: tuple = (18.0, 25.0)    # joint torque limit [N.m]
-    w0_scale: tuple = (0.9, 1.1)          # x W0
+    w0_scale: tuple = (0.8, 1.05)         # x W0 (battery sag under load lowers the no-load speed)
+    torque_lag_s: tuple = (0.001, 0.004)  # current loop + CAN-FD
+    power_limit_w: tuple = (500.0, 900.0) # battery (24 V 3 Ah drill pack) for all motors together
+    action_delay_steps: tuple = (0, 10)   # policy inference + communication [ms]
+    joint_friction: tuple = (0.05, 0.3)   # gearbox friction at the joint [N.m] (hips and wheels)
     level_up_distance: float = 2.5        # [m] from the spawn point at the end of the episode
     rew: dict = field(default_factory=lambda: dict(
         track_speed=3.0, track_yaw=1.0, track_leg=0.3, upright=-2.0, ang_vel_xy=-0.05, lin_vel_z=-0.2,
         action=-0.01, action_rate=-0.05, torque=-1e-4, gear_contact=-2.0, body_contact=-3.0, impact=-1.0,
-        stand_still=-1.0, climb=40.0, termination=-10.0))
+        stand_still=-1.0, climb=40.0, hop_climb=15.0, hip_limit=-20.0, leg_split=-3.0, power=-0.002, extension_speed=-0.5,
+        termination=-10.0))
 
 
 class SkillEnv(PrimusWarpEnv):
@@ -75,11 +81,34 @@ class SkillEnv(PrimusWarpEnv):
         u = lambda a, b: a + (b - a) * torch.rand(self.num_envs, generator=g, device=self.device)
         self.drv[:, 0] = u(lo, hi)
         self.drv[:, 1] = W0 * u(*cfg.w0_scale)
+        self.drv[:, 2] = u(*cfg.torque_lag_s)
+        self.drv[:, 3] = u(*cfg.power_limit_w)
+        self.drv[:, 4] = torch.randint(cfg.action_delay_steps[0], cfg.action_delay_steps[1] + 1, (self.num_envs,),
+                                       generator=g, device=self.device).float()
         self._compute_obs()
 
     # ---------------- setup ----------------
     def _make_terrain(self, seed):
         return ST.make_terrain(n_levels=self.cfg.terrain_levels, seed=seed)
+
+    def _setup_randomization(self):
+        super()._setup_randomization()
+        import numpy as np
+        m, N = self.mjm, self.num_envs
+        rng = np.random.default_rng(4321)
+        fl = np.tile(m.dof_frictionloss[None], (N, 1)).astype(np.float32)
+        dofs = [int(m.jnt_dofadr[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"{j}_{s}")])
+                for j in ("hip_Yp", "hip_Ym", "wheel") for s in ("xp", "xm")]
+        fl[:, dofs] = rng.uniform(*self.cfg.joint_friction, (N, len(dofs))).astype(np.float32)
+        self.mw.dof_frictionloss = wp.array(fl, dtype=float)
+        self.hip_q = [int(m.jnt_qposadr[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"{j}_{s}")])
+                      for j in ("hip_Yp", "hip_Ym") for s in ("xp", "xm")]
+        self.hip_v = [int(m.jnt_dofadr[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"{j}_{s}")])
+                      for j in ("hip_Yp", "hip_Ym") for s in ("xp", "xm")]
+        self.hip_lo = torch.tensor([m.jnt_range[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"{j}_{s}")][0]
+                                    for j in ("hip_Yp", "hip_Ym") for s in ("xp", "xm")], device=self.device)
+        self.hip_hi = torch.tensor([m.jnt_range[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"{j}_{s}")][1]
+                                    for j in ("hip_Yp", "hip_Ym") for s in ("xp", "xm")], device=self.device)
 
     def _patch_model(self, mjm):
         # actuator range = the largest torque drawn; the kernel clamps each robot to its own limit
@@ -93,6 +122,7 @@ class SkillEnv(PrimusWarpEnv):
         self.Cg = torch.tensor(ter["ceiling"], device=dev).nan_to_num(posinf=10.0).clamp(max=10.0)
         self.type_w = torch.tensor(self.cfg.type_weights, device=dev)
         self.goal_heading, self.last_vz, self.ep_cmd_dist = z(N), z(N), z(N)
+        self.since_jump = z(N) + 10.0                     # seconds since the jump primitive was last active
         self.ground_best, self.ground0 = z(N), z(N)       # highest ground reached on the wheels, ground at spawn
         self.drv = None
         self.frame_dim += 1                               # + jump phase
@@ -166,9 +196,12 @@ class SkillEnv(PrimusWarpEnv):
         ring = torch.stack([rad * torch.cos(ang), rad * torch.sin(ang)], -1)
         local = torch.where((tt == types.index("curbs"))[..., None], ring, local)
         # gaps: on the centre island
-        local = torch.where((tt == types.index("gaps"))[..., None], 0.5 * local, local)
+        on_island = (tt == types.index("gaps")) | (tt == types.index("gaps_wide")) | (tt == types.index("hurdles"))
+        local = torch.where(on_island[..., None], 0.5 * local, local)
         # stairs: half on the top platform (descend), half at the foot facing the stairs (climb)
-        stairs = tt == types.index("stairs")
+        stairs = (tt == types.index("stairs")) | (tt == types.index("stairs_wide")) | (tt == types.index("stairs_long"))
+        small_top = (tt == types.index("stairs_wide")) | (tt == types.index("stairs_long"))
+        local = torch.where(small_top[..., None], 0.6 * local, local)
         side = torch.randint(0, 4, (n, K), generator=self.gen, device=dev).float() * (math.pi / 2)
         d, lat = r(ST.STAIR_HALF + 0.25, 3.75), r(-2.0, 2.0)
         cs_, sn = torch.cos(side), torch.sin(side)
@@ -191,6 +224,7 @@ class SkillEnv(PrimusWarpEnv):
         R = self._quat_R(q)
         self.goal_heading[ids] = torch.atan2(-R[:, 0, 1], R[:, 1, 1])
         self.last_vz[ids] = 0.0
+        self.since_jump[ids] = 10.0
         self.ep_cmd_dist[ids] = 0.0
         g0 = self._sample_ground(self.qpos[ids, 0:2])
         self.ground0[ids], self.ground_best[ids] = g0, g0
@@ -210,6 +244,9 @@ class SkillEnv(PrimusWarpEnv):
         u = lambda: torch.rand(n, generator=self.gen, device=dev)
         speed = self._rand(n, *cfg.speed_range)
         speed = torch.where(easy & (u() < cfg.p_back), self._rand(n, *cfg.back_range), speed)
+        fast = (self.ttype[ids] == self.terrain["types"].index("hurdles")) | \
+               (self.ttype[ids] == self.terrain["types"].index("gaps_wide"))
+        speed = torch.where(fast, self._rand(n, *cfg.fast_speed), speed)
         speed[u() < cfg.p_zero_speed] = 0.0
         self.cmd[ids, 0] = speed
         self.cmd[ids, 2] = self._rand(n, *cfg.leg_range)
@@ -297,13 +334,19 @@ class SkillEnv(PrimusWarpEnv):
         gain = torch.where(on_ground, (g - self.ground_best).clamp(0.0, 0.25), torch.zeros_like(g))
         self.ground_best = torch.where(on_ground, torch.maximum(self.ground_best, g), self.ground_best)
         self.last_vz = vz.clone()
+        # the jump primitive (and the 0.3 s after it): the plant model already limits torque, speed and power, so
+        # its cost is not punished, only what comes after it (falls, impacts)
+        jumping = o[:, C.O["jump_phase"]] > 0.5
+        self.since_jump = torch.where(jumping, torch.zeros_like(self.since_jump), self.since_jump + self.dt)
+        free = (self.since_jump > 0.3).float()
+        hop_gain = gain * (self.since_jump < 1.0)         # height gained within 1 s of a hop
         terms = dict(
             track_speed=torch.exp(-speed_err / 0.1) * oper,
             track_yaw=torch.exp(-yaw_err / 0.2) * oper,
             track_leg=torch.exp(-(leg - self.cmd[:, 2]).square() / 0.04 ** 2) * oper * open_above,
             upright=grav_b[:, 0].square() + grav_b[:, 1].square(),
             ang_vel_xy=self.qvel[:, 3:5].square().sum(-1),
-            lin_vel_z=vz.square(),
+            lin_vel_z=vz.square() * free,
             action=self.actions.square().sum(-1),
             action_rate=(self.actions - self.last_actions).square().sum(-1),
             torque=self.out[:, C.O["tau_hYp_xp"]:C.O["tau_w_xm"] + 1].square().sum(-1),
@@ -312,6 +355,17 @@ class SkillEnv(PrimusWarpEnv):
             impact=impact,
             stand_still=v_fwd.abs() * (self.cmd[:, 0] == 0) * oper,      # hold still when told to (no rocking)
             climb=gain / self.dt,                                         # x dt below = metres gained
+            hop_climb=hop_gain / self.dt,
+            # stay away from the hip limits (the 5-bar folding through itself) by 10 deg
+            hip_limit=((self.hip_lo + 0.175 - self.qpos[:, self.hip_q]).clamp_min(0).square()
+                       + (self.qpos[:, self.hip_q] - self.hip_hi + 0.175).clamp_min(0).square()).sum(-1),
+            # one wheel ahead of the other: allowed, but it costs beyond ~12 deg
+            leg_split=((o[:, C.O["th_xp"]] - o[:, C.O["th_xm"]]).abs() - 0.2).clamp_min(0).square(),
+            power=(self.out[:, C.O["tau_hYp_xp"]:C.O["tau_w_xm"] + 1]
+                   * self.qvel[:, [self.hip_v[0], self.hip_v[2], self.hip_v[1], self.hip_v[3]] + self.qv_wheel]
+                   ).clamp_min(0).sum(-1) * free,
+            extension_speed=(torch.stack([o[:, C.O["dL_xp"]], o[:, C.O["dL_xm"]]], -1).abs() - 2.5).clamp_min(0)
+            .square().sum(-1) * free,
         )
         # falls: tilted, chassis touching a box feature or too low over the heightfield (it does not collide
         # with it), down a gap, or the controller protection cut the torques
@@ -351,8 +405,11 @@ class SkillEnv(PrimusWarpEnv):
             # up after crossing the tile; down after a fall or when it moved less than 30% of the commanded way
             up = timeout[ids] & (dist > self.cfg.level_up_distance)
             rise = torch.tensor(ST.STAIR_RISE, device=self.device)[self.level[ids]]
-            stairs = self.ttype[ids] == self.terrain["types"].index("stairs")
-            up |= stairs & ~terminated[ids] & (self.ground_best[ids] - self.ground0[ids] >= 3 * rise - 0.01)  # 3 steps
+            T_ = self.terrain["types"]
+            stairs = (self.ttype[ids] == T_.index("stairs")) | (self.ttype[ids] == T_.index("stairs_wide"))
+            long_ = self.ttype[ids] == T_.index("stairs_long")
+            need = torch.where(long_, 6.0, 3.0) * rise - 0.01                  # steps to climb (6 on the long flight)
+            up |= (stairs | long_) & ~terminated[ids] & (self.ground_best[ids] - self.ground0[ids] >= need)
             down = terminated[ids] | (dist < 0.3 * self.ep_cmd_dist[ids])
             lv = self.level[ids] + up.long() - (down & ~up).long()
             top = self.cfg.terrain_levels - 1

@@ -107,6 +107,7 @@ class PrimusWarpEnv(VecEnv):
         tt = lambda a: wp.to_torch(a)
         self.qpos, self.qvel, self.ctrl = tt(self.dw.qpos), tt(self.dw.qvel), tt(self.dw.ctrl)
         self.cs, self.out, self.cmd, self.res = tt(self.ctl.cs), tt(self.ctl.out), tt(self.ctl.cmd), tt(self.ctl.res)
+        self.resp = tt(self.ctl.resp)
         self.mask = tt(self.ctl.mask)
         self.con_geom, self.con_world, self.nacon = tt(self.dw.contact.geom), tt(self.dw.contact.worldid), tt(self.dw.nacon)
         self.qacc_warmstart = tt(self.dw.qacc_warmstart)
@@ -301,6 +302,7 @@ class PrimusWarpEnv(VecEnv):
             buf[ids] = 0.0
         self.ctrl[ids] = 0.0
         self.res[ids] = 0.0
+        self.resp[ids] = 0.0
         self.out[ids] = 0.0
         self.spawn_xy[ids] = xy
         self._resample_commands(ids)
@@ -366,7 +368,9 @@ class PrimusWarpEnv(VecEnv):
         cfg, N = self.cfg, self.num_envs
         self.last_actions.copy_(self.actions)
         self.actions.copy_(actions.clamp(-1, 1))
+        self.resp.copy_(self.res)                      # previous action: still applied during the action delay
         self.res[:, :self.num_actions] = self.actions * self.res_scale + self.res_offset
+        self.cs[:, C.S["sub"]] = 0.0
         # pushes: change the horizontal base velocity
         self.push_timer -= self.dt
         pushed = (self.push_timer <= 0).nonzero().flatten()

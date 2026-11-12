@@ -20,9 +20,12 @@ RESIDUAL (per robot, physical units, only in OPERATING mode):
   [jump]           > 0.5 starts the jump primitive (push the legs out, then tuck them; RepoControlPolicy)
   [ext, push, tuck] jump extension length [m], push force [N], tuck length [m], latched when the jump starts
 
-DRIVE (per robot, `drv`): joint torque limit [N.m] and joint no-load speed [rad/s]. With a no-load speed > 0 the
-available torque drops linearly with the joint speed in the direction of motion (DC motor; a model of the plant,
-not part of the controller). The default (joint limit of the model, no droop) is the numpy controller.
+DRIVE (per robot, `drv`; a model of the plant, not part of the controller): joint torque limit [N.m], joint
+no-load speed [rad/s] (> 0: the available torque drops linearly with the speed in the direction of motion, DC
+motor), torque lag [s] (first order: current loop + CAN), total power limit [W] (battery: the motors doing
+positive work share it), and the policy action delay [physics steps] (the previous action stays in use for that
+long after each policy step: inference + communication). The defaults (model limit, no droop / lag / power limit
+/ delay) are the numpy controller.
 """
 import math
 import sys
@@ -53,7 +56,9 @@ _STATE = ["mode", "gear_down", "gear_timer", "stable_time", "length_ref",
           "z1_xp", "z1_xm", "z2_xp", "z2_xm", "ddz_xp", "ddz_xm",
           "a_lat",                                             # filtered lateral (centripetal) acceleration
           "jump_phase", "jump_t", "jump_cool",                 # jump primitive (0 idle, 1 push, 2 tuck)
-          "jump_ext", "jump_push", "jump_tuck"]                # its shape, latched at the trigger
+          "jump_ext", "jump_push", "jump_tuck",                # its shape, latched at the trigger
+          "sub",                                               # physics steps since the policy step (env resets)
+          "tau0", "tau1", "tau2", "tau3", "tau4", "tau5"]      # applied joint torques (lag state)
 S = {n: i for i, n in enumerate(_STATE)}
 NSTATE = len(_STATE)
 # ---- per-robot outputs: columns of `out` (for observations and rewards) ----
@@ -273,6 +278,14 @@ def quat_rot(q: wp.quat):
 
 
 @wp.func
+def rd(res: wp.array2d(dtype=float), resp: wp.array2d(dtype=float), w: int, i: int, delayed: bool):
+    """policy action column i: the previous one while the new one is still on its way"""
+    if delayed:
+        return resp[w, i]
+    return res[w, i]
+
+
+@wp.func
 def drive_clamp(tau: float, speed: float, lim: float, w0: float):
     """torque limit with a linear torque-speed droop in the direction of motion (w0 <= 0: no droop)"""
     l = lim
@@ -339,7 +352,8 @@ def reset_kernel(prm: Params, mask: wp.array(dtype=int), qpos: wp.array2d(dtype=
 def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
                    qpos: wp.array2d(dtype=float), qvel: wp.array2d(dtype=float),
                    sensordata: wp.array2d(dtype=float), qfrc_actuator: wp.array2d(dtype=float),
-                   cmd: wp.array2d(dtype=float), res: wp.array2d(dtype=float), drv: wp.array2d(dtype=float),
+                   cmd: wp.array2d(dtype=float), res: wp.array2d(dtype=float), resp: wp.array2d(dtype=float),
+                   drv: wp.array2d(dtype=float),
                    cs: wp.array2d(dtype=float), out: wp.array2d(dtype=float), ctrl: wp.array2d(dtype=float)):
     w = wp.tid()
     dt = prm.dt
@@ -469,12 +483,14 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
     r_dT = wp.vec2(0.0, 0.0)
     r_dF = wp.vec2(0.0, 0.0)
     trigger = False
+    dl = cs[w, S_SUB] < drv[w, 4]                   # action delay
+    cs[w, S_SUB] = cs[w, S_SUB] + 1.0
     if operating:
-        trigger = res[w, 8] > 0.5
-        r_dl = wp.vec2(res[w, 0], res[w, 1])
-        r_dth = wp.vec2(res[w, 2], res[w, 3])
-        r_dT = wp.vec2(res[w, 4], res[w, 5])
-        r_dF = wp.vec2(res[w, 6], res[w, 7])
+        trigger = rd(res, resp, w, 8, dl) > 0.5
+        r_dl = wp.vec2(rd(res, resp, w, 0, dl), rd(res, resp, w, 1, dl))
+        r_dth = wp.vec2(rd(res, resp, w, 2, dl), rd(res, resp, w, 3, dl))
+        r_dT = wp.vec2(rd(res, resp, w, 4, dl), rd(res, resp, w, 5, dl))
+        r_dF = wp.vec2(rd(res, resp, w, 6, dl), rd(res, resp, w, 7, dl))
 
     if mode == PARKED:
         length_ref = prm.park_len
@@ -592,10 +608,10 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
         ext = prm.jump_ext_len
         push = prm.jump_force
         tuck = prm.jump_tuck_len
-        if res[w, 9] > 0.0:                         # policy-chosen jump shape (<= 0: defaults)
-            ext = wp.clamp(res[w, 9], 0.38, prm.max_len)
-            push = wp.clamp(res[w, 10], 100.0, 300.0)
-            tuck = wp.clamp(res[w, 11], prm.min_len, 0.32)
+        if rd(res, resp, w, 9, dl) > 0.0:           # policy-chosen jump shape (<= 0: defaults)
+            ext = wp.clamp(rd(res, resp, w, 9, dl), 0.38, prm.max_len)
+            push = wp.clamp(rd(res, resp, w, 10, dl), 100.0, 300.0)
+            tuck = wp.clamp(rd(res, resp, w, 11, dl), prm.min_len, 0.32)
         if trigger and grounded == 1 and jcool >= prm.jump_cooldown_s and avg_len < ext - 0.05:
             jphase = 1
             jt = 0.0
@@ -658,6 +674,8 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
     protect = wp.abs(theta) > 1.0471975512 or wp.abs(pitch) > 1.0471975512
     lim = drv[w, 0]
     w0 = drv[w, 1]
+    alpha = dt / (drv[w, 2] + dt)                   # torque lag (drv 2 = 0: none)
+    p_pos = float(0.0)                              # positive mechanical power of the 6 motors
     for s in range(2):
         J = J0
         if s == 1:
@@ -674,12 +692,30 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
         t_hp = drive_clamp(th[0], qvel[w, prm.qv_hipYp[s]], lim, w0)
         t_hm = drive_clamp(th[1], qvel[w, prm.qv_hipYm[s]], lim, w0)
         tw = drive_clamp(tw, qvel[w, prm.qv_wheel[s]], lim, w0)
-        ctrl[w, prm.u_hipYp[s]] = t_hp / prm.gear_ratio
-        ctrl[w, prm.u_hipYm[s]] = t_hm / prm.gear_ratio
-        ctrl[w, prm.u_wheel[s]] = tw / prm.gear_ratio
-        out[w, O_TAU_HYP_XP + 2 * s] = t_hp
-        out[w, O_TAU_HYM_XP + 2 * s] = t_hm
-        out[w, O_TAU_W_XP + s] = tw
+        t_hp = cs[w, S_TAU0 + 3 * s] + alpha * (t_hp - cs[w, S_TAU0 + 3 * s])
+        t_hm = cs[w, S_TAU0 + 3 * s + 1] + alpha * (t_hm - cs[w, S_TAU0 + 3 * s + 1])
+        tw = cs[w, S_TAU0 + 3 * s + 2] + alpha * (tw - cs[w, S_TAU0 + 3 * s + 2])
+        cs[w, S_TAU0 + 3 * s] = t_hp
+        cs[w, S_TAU0 + 3 * s + 1] = t_hm
+        cs[w, S_TAU0 + 3 * s + 2] = tw
+        p_pos += wp.max(0.0, t_hp * qvel[w, prm.qv_hipYp[s]]) + wp.max(0.0, t_hm * qvel[w, prm.qv_hipYm[s]]) \
+            + wp.max(0.0, tw * qvel[w, prm.qv_wheel[s]])
+    # battery: when the motors doing positive work ask for more than the power limit, they share it
+    k_p = float(1.0)
+    if p_pos > drv[w, 3]:
+        k_p = drv[w, 3] / p_pos
+    for s in range(2):
+        t3 = wp.vec3(cs[w, S_TAU0 + 3 * s], cs[w, S_TAU0 + 3 * s + 1], cs[w, S_TAU0 + 3 * s + 2])
+        v3 = wp.vec3(qvel[w, prm.qv_hipYp[s]], qvel[w, prm.qv_hipYm[s]], qvel[w, prm.qv_wheel[s]])
+        for i in range(3):
+            if t3[i] * v3[i] > 0.0:
+                t3[i] = t3[i] * k_p
+        ctrl[w, prm.u_hipYp[s]] = t3[0] / prm.gear_ratio
+        ctrl[w, prm.u_hipYm[s]] = t3[1] / prm.gear_ratio
+        ctrl[w, prm.u_wheel[s]] = t3[2] / prm.gear_ratio
+        out[w, O_TAU_HYP_XP + 2 * s] = t3[0]
+        out[w, O_TAU_HYM_XP + 2 * s] = t3[1]
+        out[w, O_TAU_W_XP + s] = t3[2]
     for g in range(2):
         if gear_down:
             ctrl[w, prm.u_servo[g]] = prm.gear_down_angle[g]
@@ -721,8 +757,11 @@ class BatchedController:
         self.cmd = wp.zeros((nworld, NCMD), dtype=float, device=device)
         self.res = wp.zeros((nworld, NRES), dtype=float, device=device)
         self.mask = wp.zeros(nworld, dtype=int, device=device)
-        # per-robot drive: (joint torque limit [N.m], no-load joint speed [rad/s], 0 = no droop)
-        self.drv = wp.array(np.tile([[self.prm.joint_limit, 0.0]], (nworld, 1)).astype(np.float32), device=device)
+        self.resp = wp.zeros((nworld, NRES), dtype=float, device=device)      # previous policy action
+        # per-robot drive (see DRIVE): torque limit, no-load speed (0 = no droop), torque lag [s], power limit [W],
+        # action delay [physics steps]; the defaults are the ideal drive of the numpy controller
+        self.drv = wp.array(np.tile([[self.prm.joint_limit, 0.0, 0.0, 1e9, 0.0]], (nworld, 1)).astype(np.float32),
+                            device=device)
 
     def reset(self, d, mask=None):
         """mask: int array (nworld), 1 on the robots to reset; None = all."""
@@ -734,4 +773,4 @@ class BatchedController:
     def step(self, d):
         wp.launch(control_kernel, dim=self.nworld,
                   inputs=[self.prm, self.coeffs, d.qpos, d.qvel, d.sensordata, d.qfrc_actuator,
-                          self.cmd, self.res, self.drv, self.cs, self.out, d.ctrl], device=self.device)
+                          self.cmd, self.res, self.resp, self.drv, self.cs, self.out, d.ctrl], device=self.device)

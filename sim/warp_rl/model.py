@@ -54,11 +54,27 @@ def _capsule(v, radius_percentile=85.0):
     return c + lo * axis, c + hi * axis, max(r, 0.01)
 
 
+# Hip joint range [deg] from the CAD pose: the closed 5-bar must not fold through itself — the front arm (Yp) never
+# rotates back past pointing straight down, the rear arm (Ym) never forward past it (swept with the CAD collision
+# hulls, self-collision on). Beyond this the mechanism flips to its other branch.
+HIP_RANGE_DEG = {"hip_Yp": (-49.0, 118.0), "hip_Ym": (-124.0, 47.0)}
+
+
+def apply_hip_limits(spec):
+    import math
+    for j in spec.joints:
+        for prefix, (lo, hi) in HIP_RANGE_DEG.items():
+            if j.name.startswith(prefix + "_"):
+                j.limited = mujoco.mjtLimited.mjLIMITED_TRUE
+                j.range = [lo, hi] if spec.compiler.degree else [math.radians(lo), math.radians(hi)]   # MJCF units
+
+
 def robot_spec(collision="minimal"):
     """Robot MjSpec with simplified collision ("minimal": tires + gear tips; "full": + chassis and legs)."""
     source = mujoco.MjModel.from_xml_path(str(ROBOT_XML))
     verts = _body_hull_vertices(source)
     spec = mujoco.MjSpec.from_file(str(ROBOT_XML))
+    apply_hip_limits(spec)
     for geom in list(spec.geoms):
         if geom.group == COLLISION_GROUP and geom.type == mujoco.mjtGeom.mjGEOM_MESH:
             spec.delete(geom)

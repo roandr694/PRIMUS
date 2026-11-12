@@ -162,6 +162,22 @@ episodes (a whole flight), climb reward doubled. Initialised from v3 (`train.py 
 copied into the larger networks with the observation columns remapped; checked exact to 4e-7).
 **Student v2 (next):** a GRU student (`train.py --task student --recurrent`), distilled from v4.
 
+**Teacher v7 (from scratch, encoders):** stairs up on real 30 cm treads 4.1 / 4.6 / 3.7 / 2.6 of 5 steps at
+10 / 13 / 16 / 19 cm (v6: 2.3 / 1.0 / 1.1 / 0.7). The videos showed what the simulator allowed but the robot
+cannot do: an upper arm turning a full circle (the hips had no limits; the 5-bar folded through itself), the legs
+split ~60° on the way down (the leg-angle residual allowed it, at no cost), and jumps always at full push with an
+ideal drive. **v8 (prepared):** hip limits from the CAD (`model.HIP_RANGE_DEG`), a drive model in the kernel
+(torque lag 1–4 ms, action delay 0–10 ms, battery power limit 500–900 W, voltage sag, gearbox friction), push
+130–250 N, leg-angle residual ±0.35 rad, costs for hip-limit proximity, leg split beyond ~12°, positive power and
+leg extension faster than 2.5 m/s. Estimates in `hardware/actuators.json`.
+
+**Teacher v8 (realistic hips and motors, done):** stairs up 96 / 67 / 59 / 60 / 75 / 22% at 4–19 cm, peak power
+340–380 W, no spinning links; never uses the jump. **v9 (training):** hop-assist exploration: new terrains
+(`hurdles`, `gaps_wide`, `stairs_long`), `hop_climb` reward with the jump exempt from the vertical-speed, power and
+extension-speed penalties for 0.3 s, trigger injection near step and trench edges in rollouts only
+(`SkillTeacherModel._inject_hops`), per-action std floor 0.3 on actions 8–11, and a cap on the PPO log-ratio
+(`train.py`) after two NaN crashes caused by off-policy injected actions. Full story: [docs/experiments.md](../../docs/experiments.md).
+
 **Earlier plan:** train the student — the same policy with the elevation map of the simulated D435i (noise, field of view,
 occlusions, memory, drift) instead of the perfect scans, and a longer history instead of the privileged values,
 distilled from the teacher; then the robot.
