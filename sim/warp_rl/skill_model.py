@@ -24,10 +24,9 @@ def _enc(i, h, o):
 class SkillTeacherModel(MLPModel):
     def __init__(self, obs, obs_groups, obs_set, output_dim, hidden_dims=(512, 256, 128), activation="elu",
                  obs_normalization=True, distribution_cfg=None, layout=(102, 8, 155, 45), scan_latent=32,
-                 priv_latent=8, ceil_latent=8, assist=None):
+                 priv_latent=8, ceil_latent=8, assist=None):   # assist: unused (old checkpoints' configs)
         # plain ints before nn.Module.__init__ (the base class builds the MLP from _get_latent_dim)
         self.layout, self.lat = tuple(layout), (scan_latent, priv_latent, ceil_latent)
-        self.assist, self._calls = assist, 0
         super().__init__(obs, obs_groups, obs_set, output_dim, hidden_dims, activation, obs_normalization,
                          distribution_cfg)
         h, p, s, c = self.layout
@@ -35,44 +34,6 @@ class SkillTeacherModel(MLPModel):
         self.priv_enc = _enc(p, 32, priv_latent)
         self.scan_enc = _enc(s, 128, scan_latent)
         self.ceil_enc = _enc(c, 32, ceil_latent)
-
-    def forward(self, obs, masks=None, hidden_state=None, stochastic_output=False):
-        out = super().forward(obs, masks, hidden_state, stochastic_output)
-        if stochastic_output and self.assist is not None and not torch.is_grad_enabled():   # rollout only
-            out = self._inject_hops(obs, out)
-        return out
-
-    @torch.no_grad()
-    def _inject_hops(self, obs, a):
-        """Exploration of the jump the plain Gaussian never finds (the trigger sits ~7 sigma from its threshold):
-        where the scan shows a step up / a wall (0.15-0.45 m ahead) or a trench (0.2-0.6 m ahead) and the robot
-        stands on level ground, a few % of the steps replace the jump actions (trigger, extension, push, tuck)
-        by a hop trigger (the shape comes from the policy's own sample). The injected trigger is what the rollout
-        stores as the action taken, so PPO credits the outcome to it (v9 first try: also injecting the shape
-        put 12 sigma outliers in the batch and the policy went NaN). Probability decays from p0 to p1 over `anneal_calls` steps."""
-        c = self.assist
-        x = torch.cat([obs[g] for g in self.obs_groups], dim=-1)
-        h, p, s = self.layout[0], self.layout[1], self.layout[2]
-        scan = x[:, h + p:h + p + s].view(-1, 31, 5)[:, :, 2]          # centre column, forward -0.30 .. 1.20 m
-        rel = -(scan - scan[:, 6:7])                                    # ground height ahead relative to here
-        fwd = lambda lo, hi: slice(int(round((lo + 0.30) / 0.05)), int(round((hi + 0.30) / 0.05)) + 1)
-        step = rel[:, 1:] - rel[:, :-1]                                 # change between neighbouring 5 cm cells
-        e_lo, e_hi = fwd(0.15, 0.45), fwd(0.20, 0.60)
-        edge_up = step[:, e_lo.start:e_lo.stop].amax(-1) > 0.04                # a step edge, not a slope / rough ground
-        edge_dn = step[:, e_hi.start:e_hi.stop].amin(-1) < -0.20               # a trench edge
-        rise = rel[:, e_lo].amax(-1)
-        level_now = rel[:, fwd(-0.10, 0.05)].abs().amax(-1) < 0.04
-        up = edge_up & (rise > 0.05) & (rise < 0.30) & level_now
-        near = up | (edge_dn & level_now)
-        mult = torch.where(up, 1.0, c.get("trench_mult", 0.5))
-        k = min(self._calls / c["anneal_calls"], 1.0)
-        pr = c["p0"] + (c["p1"] - c["p0"]) * k
-        self._calls += 1
-        fire = near & (torch.rand(a.shape[0], device=a.device) < pr * mult)
-        if fire.any():                      # only the trigger is replaced (a bit above the 0.5 threshold); the shape
-            a = a.clone()                   # actions keep the policy's own samples, so nothing is far off-policy
-            a[fire, 8] = c.get("trigger_value", 0.65)
-        return a
 
     def _get_latent_dim(self):
         return self.layout[0] + sum(self.lat)

@@ -65,24 +65,16 @@ DISTILL_CFG = {
 }
 
 
-def skill_ppo(env, arch, base=None, assist=None):
+def skill_ppo(env, arch, base=None):
     """PPO config for the skill teacher. arch "mlp": one MLP; "encoders": skill_model.SkillTeacherModel
     (terrain and privileged encoders, then the MLP)."""
     ppo = copy.deepcopy(base or PPO_CFG)
     ppo["actor"]["distribution_cfg"].update(init_std=0.3, std_range=[0.1, 0.5])
-    if arch == "encoders" and assist:
-        ppo["actor"]["assist"] = assist
     if arch == "encoders":
         layout = [env.cfg.history * env.frame_dim, 8, 155, 45]
         for k in ("actor", "critic"):
             ppo[k].update(class_name="skill_model:SkillTeacherModel", layout=layout)
     return ppo
-
-
-def hop_assist(cfg, p0, p1, iterations):
-    """Hop injection (skill_model.SkillTeacherModel): shape ranges of the random hops, probability schedule."""
-    return dict(p0=p0, p1=p1, anneal_calls=24 * int(0.6 * iterations), offset=list(cfg.residual_offset),
-                scale=list(cfg.residual_scale), shape_lo=[0.44, 150.0, 0.20], shape_hi=[0.52, 300.0, 0.32])
 
 
 def recurrent_student():
@@ -152,10 +144,6 @@ def main():
     ap.add_argument("--init-from", default=None,
                     help="skills: start from an older skill checkpoint with fewer actions (weights remapped)")
     ap.add_argument("--name", default=None, help="run name (default: warp-residual / skill-teacher)")
-    ap.add_argument("--assist-p0", type=float, default=0.03, help="skills: hop injection probability per step near a "
-                    "step / wall / trench, at the start (decays to --assist-p1 over 60%% of the run)")
-    ap.add_argument("--assist-p1", type=float, default=0.01)
-    ap.add_argument("--shape-std-floor", type=float, default=0.25, help="skills: std floor of the jump trigger and shape actions")
     ap.add_argument("--no-eval", action="store_true")
     args = ap.parse_args()
 
@@ -201,7 +189,7 @@ def main():
     torch.manual_seed(args.seed)
     env = PrimusWarpEnv(cfg, device=args.device, seed=args.seed)
     if args.task == "skills" and args.arch != "mlp":
-        ppo = skill_ppo(env, args.arch, ppo, assist=hop_assist(cfg, args.assist_p0, args.assist_p1, args.iterations))
+        ppo = skill_ppo(env, args.arch, ppo)
         manifest["ppo_cfg"] = ppo
         (run / "experiment.json").write_text(json.dumps(manifest, indent=2, default=str))
     if args.task == "student":
@@ -230,19 +218,6 @@ def main():
             head.bias[:env.num_actions].zero_()
             if args.task == "skills":
                 head.bias[8] = -0.3           # jump trigger: rare random jumps (a > 0.5 ~ 1 per 5 s) to discover them
-    if args.task == "skills":                  # jump shape (extension, push, tuck): keep exploring it
-        dist = runner.alg.actor.distribution
-        floor = torch.full((env.num_actions,), dist.std_range[0], device=args.device)
-        floor[8:12] = args.shape_std_floor     # trigger too: injected value 0.65 must stay ~2 sigma away
-        dist.std_range = [floor, torch.full_like(floor, dist.std_range[1])]
-        with torch.no_grad():
-            dist.std_param[8:12] = torch.clamp(dist.std_param[8:12], min=0.3)
-    if args.task == "skills":                  # v9: one batch had a ratio ~1e5 (surrogate 2e4) and the policy went NaN two
-        import types, rsl_rl.algorithms.ppo as _ppo      # steps later: cap the log-ratio so one outlier cannot dominate
-        class _T(types.ModuleType):
-            def __getattr__(self, k): return getattr(torch, k)
-            def exp(self, x): return torch.exp(x.clamp(max=1.5))
-        _ppo.torch = _T("torch_guard")
     t0 = time.time()
     runner.learn(num_learning_iterations=args.iterations, init_at_random_ep_len=True)
     manifest.update(status="trained", train_seconds=round(time.time() - t0, 1),

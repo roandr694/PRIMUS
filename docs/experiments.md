@@ -1,6 +1,6 @@
 # Experiment log: how the autonomous-skills policy was built
 
-*Written 2026-11-11. This is the scientific record of the reinforcement-learning work: what was tried, what
+*Written 2026-11-11, updated 2026-11-17 (v9 corrected, v10, v11, v12 plan). This is the scientific record of the reinforcement-learning work: what was tried, what
 happened, why, how it was fixed, and which decisions followed. Numbers come from `skill_eval.json` of each run
 (`experiments/<run>/`); "success" = no fall and at least 2.5 m covered in 12 s. For the current state and the
 plan, see [status_and_plan.md](status_and_plan.md). For the controller itself, see
@@ -80,7 +80,7 @@ and the near field is blind (~0.85 m), so jump timing depends on memory and drif
      and the actuators).
 - **Decision:** results from v7 are not trustworthy for sim-to-real. Keep the architecture, fix the physics.
 
-### v8: realistic hips and motors (10 000 iterations, 7 h) — current best teacher
+### v8: realistic hips and motors (10 000 iterations, 7 h)
 Changes, all aimed at removing "free" physics:
 - hip joint limits from the CAD (`model.HIP_RANGE_DEG`: hip_Yp −49..118°, hip_Ym −124..47°);
 - motor model in the kernel: torque limit drawn per robot (18–25 N·m) with speed droop W0 ×0.8–1.05, torque lag
@@ -132,7 +132,7 @@ on the final v8 checkpoint answered it.
 more stable than one wheel at a time. Gaps, and later larger gaps and equestrian-style hurdles, must keep working
 or be trained.
 
-## 4. v9: teaching the hop (in progress)
+## 4. v9: teaching the hop (failed; see the correction at the end of this section)
 
 Hypothesis: the jump is never discovered because exploration cannot reach the trigger; if the rollout shows PPO the
 outcome of hops near step edges, the policy will learn to use them. Changes:
@@ -168,11 +168,110 @@ Run 3 passed the previous crash point (iteration 660) cleanly. It is expected to
 Early training signals (iteration 90): `Metrics/fell` ≈ 0.55 (high on purpose: new hard terrains and hops),
 `hop_climb` ≈ 0.011 and growing; surrogate loss normal.
 
+### v9 result (final checkpoint, 6500 + 500 iterations, evaluated 2026-11-11)
+
+Success by level (0 → 5), v8 → v9:
+
+| terrain | v8 | v9 |
+|---|---|---|
+| stairs up | 96 / 67 / 59 / 60 / 75 / 22 | 100 / 100 / 69 / 76 / 57 / **56** |
+| stairs down | 100 / 88 / 90 / 86 / 93 / 80 | 100 / 96 / 100 / 86 / 88 / 82 |
+| curbs | 94 / 88 / 69 / 79 / 54 / 60 | 97 / 97 / 95 / 87 / 76 / 76 |
+| overhang | 100 / 90 / 88 / 71 / 81 / 73 | 97 / 97 / 100 / 92 / 87 / 82 |
+| stairs, wide treads, up | 100 / 88 / 86 / 88 / 91 / 47 | 100 / 94 / 94 / 87 / 100 / 56 |
+| **gaps** | 98 / 96 / 83 / 77 / 77 / 69 | 100 / 92 / 69 / 36 / **10 / 5** |
+| hurdles (new) | 63 → 3 | 74 / 66 / 55 / 50 / 29 / 16 |
+| gaps_wide (new) | 68 → 0 | 34 / 21 / 3 / 0 / 0 / 0 |
+| stairs_long up (new) | 100 → 19 | 100 / 100 / 84 / 65 / 50 / 25 |
+
+Verdict against the agreed criteria: **stairs up at 19 cm met** (22% → 56%) and curbs, overhangs, wide stairs and
+hurdles improved; **gaps failed** (69% → 5% at the widest level, collapsing from level 3) and `gaps_wide` got worse
+at level 0 (68% → 34%). Hypothesis for the gap regression, not yet tested: the injection fires at trench edges
+too (half rate), so the policy learned to hop at gaps with the stair-tuned shape and does not clear or land them;
+v8 crossed gaps by rolling. Not measured yet: how often the trigger fires per terrain in v9 (`probe.py` on the new
+checkpoint) and the airtime of those hops.
+
+> **Correction (2026-11-16, [diagnosis_2026-11-16.md](diagnosis_2026-11-16.md)).** The table above was measured
+> with about 20 robots per cell and is wrong in its main claims. With about 190 robots per cell: **v9 never fires
+> the jump primitive** (0.0–0.2 starts per robot on stairs; the injection drove the trigger output to −16 … −54);
+> stairs up at 19 cm is 31% (v8) → 37% (v9), inside the noise; the gap loss is **refusal**, not falls (93% of the
+> robots stop about 1 m before a 45 cm trench). v7, which hops, re-evaluated on the realistic environment beats
+> v8 and v9 on the high stairs (16 cm: 88% success / 6% falls against 67% / 27% for v8). Decisions: discard v9 and
+> the injection (code removed), fix `skill_eval.py` (150+ robots per cell, success / falls / refusal, primitive
+> starts, steps under the wheels), continue v7 on the realistic environment (v10).
+
 **Open risks:** the injection may hurt gaps that v8 solves by rolling through (watch gaps/stairs falls around
 iteration ~1500); whether the policy keeps hopping after the injection probability anneals to 1% is unknown; hop
 timing may not transfer to the student's camera map (blind near field).
 
-## 5. Other experiments
+## 5. v10: v7 continued on the realistic environment (4000 iterations, 2026-11-16)
+
+Run `2026-11-16_14-38-53-skill-teacher-v10`, `--resume` from v7 `model_9999.pt`, final `model_13998.pt`. Code
+changes since v9 (all in this commit): injection and the `torch.exp` patch removed, `hop_climb` removed,
+`climb` measured under the lower wheel (not under the base), extension speed free up to 4.5 m/s (the motor model
+limits the rest), `action_excess` cost on raw actions beyond ±1 (v9's trigger drifted to −50 because the clamp
+hid it), new `skill_eval.py`.
+
+Result (about 190 robots per cell for stairs up, 150 otherwise; done / fell %, levels 4 → 19 cm):
+
+| terrain | v10 |
+|---|---|
+| stairs up | 98/2, 96/4, 92/8, 91/9, 98/2, 91/5 |
+| stairs up, weak motors, 16 / 19 cm | 93 / 85 done |
+| gaps (10 → 45 cm) | 98 → 85 done |
+| stairs_long up (8 steps) | 54–76 done |
+| stairs_long down | ~50 done |
+| hurdles | 82 → 50 done |
+| gaps_wide (30 → 80 cm) | 81 → 15 done |
+
+All acceptance criteria of the diagnosis met (16 cm ≥ 90% / ≤ 8% falls, 19 cm ≥ 54%, gaps no worse than v8, no
+refusals). The hop survived the realistic plant: 5–8 primitive starts per robot on stairs. Weak points: long
+flights and walled flights (below).
+
+## 6. v11: walled 12-step stairwells (4000 iterations, 2026-11-16)
+
+Run `2026-11-16_17-42-01-skill-teacher-v11`, `--resume` from v10, final `model_17997.pt`. New terrain type
+`stairs_narrow`: three straight flights of 12 steps between side walls (0.95–1.30 m wide, treads 0.28–0.32 m),
+spawn in a flight at the foot (facing up) or on the top platform (facing down), episode ends when the flight is
+done; a level-up there needs the whole flight. Walls are boxes in the physics and in the camera's `ground` grid,
+not in the walkable `floor` grid used for falls and climbing.
+
+Result (`eval_all.txt`, `eval_stairs.txt`, `eval_weak|nominal|strong.txt` in the run directory):
+
+| terrain (levels 4 → 19 cm) | v10 | v11 |
+|---|---|---|
+| stairs_narrow up, done / fell | 31–44 / 55–68 | 98/2, 69/30, 81/19, 96/4, 95/5, 92/5 |
+| stairs_narrow down, done | 83–98 | 94–100 |
+| stairs up, done / fell | see §5 | 100/0, 93/7, 90/10, 93/7, 95/5, 91/2 |
+| stairs_long up, done | 54–76 | 97, 90, 86, 88, 82, 78 |
+| stairs_long down, done | ~50 | 81–88 |
+| gaps (10 → 45 cm), done | 98 → 85 | 87–98 (45 cm: 91) |
+| gaps_wide, done | 81 → 15 | 92 → 36 |
+| hurdles, done | 82 → 50 | 87 → 53 |
+| stairs up, weak motors, 16 / 19 cm | 93 / 85 | 77/23, 75/8 |
+
+v11 is the best teacher so far: about 12 hops per robot for 11–12 steps on the walled flights.
+
+### What the v11 analysis found (2026-11-16, `experiments/analysis_2026-11-16/asym_probe.py`, `drive_probe.py`)
+
+- **Falls per step.** A walled flight at 16 cm loses about 0.44% of the robots per step: about 20% falls over 50
+  steps, far from "it must not die half way".
+- **Walled flights at 7 and 10 cm** (n ≈ 280): 36% and 22% falls; 96% / 60% of them the chassis hitting a step.
+  The policy hops only about half of the steps there and the robots that fell hopped less.
+- **Left–right asymmetry, in every teacher.** The controller alone is symmetric (leg split 0.06°), but every policy
+  holds a fixed staggered stance on flat ground: leg split v7 +19°, v8 −17°, v10 +16°, v11 +15° (about 8 cm of
+  wheel offset), with a 12 cm leg-length difference (≈ 40° roll reference, saturating the roll loop) cancelled by
+  ~105 N of opposite leg forces. The side is arbitrary (spontaneous symmetry breaking). Takeoff lag between the
+  wheels ~50 ms, landing lag ~100 ms. Forcing equal left/right actions breaks the skills (stairs up 95 → 50%, gaps
+  92 → 46%): the policy depends on the stagger. Nothing in PPO or the rewards ties left and right.
+- **Always-on use was never trained.** Run as an assist on flat ground with pushes, v11 cuts falls 4× (1.2 m/s
+  pushes: 0.89 → 0.22 per minute) but rides worse than the LQR: height error 0.3 → 2.9 cm, roll 0.4 → 2.2°, pitch
+  rate 0.05 → 0.16 rad/s, power 9 → 21 W, leg split 0.2 → 11.7°, and it hops by itself (1.25 starts per robot in
+  20 s with a 2.5 m/s command).
+
+These findings, and a full audit of the stack, are the input of v12: [v12_plan.md](v12_plan.md).
+
+## 7. Other experiments
 
 **Stand up after a fall (`recovery_env.py`).** v1 never parked (target leg length 0.18 m at the action limit, pose
 reward too narrow, no gradient). v2: 99.1% of 10 979 episodes parked, median 2.0 s. v3 trains from 75–180° (side
@@ -183,7 +282,7 @@ falls and upside down): 98.4% of 9 621, median 2.1 s. On CPU with full CAD colli
 overhangs) → planner and edge guard; RPLIDAR A1 for obstacles; body pitch to look (`RobotCommand.pitch_ref`).
 Through the full CPU stack the exported v1 descended 13 cm stairs and crossed 17 cm gaps from rendered depth.
 
-## 6. What the sequence taught us (for the write-up)
+## 8. What the sequence taught us (for the write-up)
 
 1. **Residual over a model-based controller** gave stable training from step 0 and a safe fallback; the
    from-scratch raw-torque run failed by exploiting the reward.
@@ -200,13 +299,17 @@ Through the full CPU stack the exported v1 descended 13 cm stairs and crossed 17
    the injected values (σ-distance) and the ratio.
 6. **Perception limits the student, not only the teacher**: a level camera cannot see the inside of a gap; jump
    timing then depends on memory and odometry drift.
+7. **Small evaluations lie.** v9's "22 → 56%" came from ~20 robots per cell; at ~190 it was 31 → 37%. Every claim
+   now uses 150+ robots per cell with a confidence interval.
+8. **A symmetric task does not give a symmetric policy.** Without a mirror constraint every teacher settled into
+   one arbitrary staggered stance and built its skills on it.
 
-## 7. Reproducing
+## 9. Reproducing
 
 ```bash
-# teacher (v9 recipe, from v8)
+# teacher (v11 recipe, continuing v10)
 ~/test/isaac-rl/bin/python sim/warp_rl/train.py --task skills --arch encoders --num-envs 4096 \
-    --iterations 7000 --name skill-teacher-v9 --init-from <v8>/logs/model_9999.pt
+    --iterations 4000 --name skill-teacher-v11 --resume <v10>/logs/model_13998.pt
 ~/test/isaac-rl/bin/python sim/warp_rl/skill_eval.py --checkpoint <run>/logs/model_N.pt --arch encoders --out <run>
 ~/test/isaac-rl/bin/python sim/warp_rl/export_policy.py --task skills --arch encoders --checkpoint <run>/logs/model_N.pt
 MUJOCO_GL=egl python3 sim/scripts/record_skill_video.py out.mp4 --policy <run>/exported --tile stairs --level 5

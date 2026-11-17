@@ -96,6 +96,9 @@ class TruthTerrain:
 def start_pose(ter, tile, level, start):
     """foot: outside the feature facing the tile centre; top: on the stairs top / island / centre platform."""
     c = ter["centers"][level, ST.TYPES.index(tile)]
+    if tile == "stairs_narrow":                                    # middle flight: foot facing up, or the top facing down
+        x = ST.NARROW_FLIGHTS[1][0]
+        return (c + np.array([x, 2.6]), math.pi) if start == "top" else (c + np.array([x, -3.2]), 0.0)
     if start == "foot":
         return c + np.array([ST.STAIR_HALF + 0.9, 0.0]), math.pi / 2
     if start == "top":

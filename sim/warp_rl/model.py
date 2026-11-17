@@ -143,7 +143,7 @@ def build(terrain=None, timestep=0.001, collision="minimal"):
                         userdata=((h - h.min()) / zmax).ravel().tolist())
         world.add_geom(name="ground", type=mujoco.mjtGeom.mjGEOM_HFIELD, hfieldname="terrain",
                        pos=[0, 0, float(h.min())], **{**ground, "contype": TOUCH_HFIELD})
-        for i, (c, sz) in enumerate(terrain.get("boxes", [])):          # sharp features (stairs, curbs, islands)
+        for i, (c, sz) in enumerate(list(terrain.get("boxes", [])) + list(terrain.get("walls", []))):   # stairs, curbs, islands, walls
             world.add_geom(name=f"box{i}", type=mujoco.mjtGeom.mjGEOM_BOX, pos=c, size=sz,
                            **{**ground, "contype": TOUCH_BOXES})
         for i, (c, sz) in enumerate(terrain.get("bars", [])):           # overhead bars
