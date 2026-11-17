@@ -271,7 +271,54 @@ v11 is the best teacher so far: about 12 hops per robot for 11–12 steps on the
 
 These findings, and a full audit of the stack, are the input of v12: [v12_plan.md](v12_plan.md).
 
-## 7. Other experiments
+## 7. v12: one always-on policy, assist + skills, mirror symmetric (training since 2026-11-17)
+
+Design and audit: [v12_plan.md](v12_plan.md) (§8 lists what was implemented). In short: a `skill` flag picks the
+regime (assist: the remote's full envelope, strong pushes, slippery ground, reduced authority, jump off, rewarded
+for riding like the LQR; skill: the planner's speed and heading, the jump on, cancels half way); actions as
+common/differential pairs; mirror augmentation + mirror loss; falls priced by height, gamma 0.995; terrain
+variants (treads per side, rise jitter, nosing, a landing, hurdle thickness) and an assist tile (`bumps`);
+curriculum per type; attitude bias and hip encoder offsets in the controller. Warm start from v11 with the weights
+remapped exactly (`tests/test_remap.py`, 4e-6).
+
+**Checks before training.** `tests/test_mirror.py` passes (the mirror map explains a mirrored rollout 3-6x better
+than any wrong alternative). The robot model is symmetric about x = -0.0117 m of the base frame, but the simulated
+cylinder-tyre contacts are not exactly mirror symmetric (two mirrored robots drift apart after ~0.5 s of violent
+actions): the symmetry is a near-symmetry. Contact buffers are 6-7% used. Controller parity with the numpy
+controller unchanged (hips 1.6%, wheels 0.4%).
+
+**Smoke run (300 iterations):** mirror loss 0.45 -> 0.05, leg split in assist 1.3 deg (v11 11.7), no jump starts in
+assist, reward rising, no term dominating. Exported to the CPU stack (obs_version 4) it climbed 13 cm stairs to the
+top in CPU MuJoCo.
+
+**Baselines on the evaluation terrain** (seed 123, unseen geometry; `experiments/v12_baselines/`):
+
+| assist, +-1 m/s pushes | flat | rough | slope | bumps |
+|---|---|---|---|---|
+| LQR alone, falls/min | 0.34 | 0.51 | 1.26 | 2.05 |
+| v11 remapped (assist regime), falls/min | 0.25 | 0.32 | 0.81 | 1.25 |
+| LQR / v11: height error cm, roll deg, pitch rate rad/s, power W (flat) | 0.5 / 3.1 | 1.4 / 2.6 | 0.08 / 0.14 | 13 / 20 |
+
+v11 remapped on the new terrain, done %, levels 0-5: open stairs up 100/89/87/90/96/88; walled flights up
+86/44/33/48/15/4 (many refusals: nosing, the landing, the narrower differential range; falls per step 1.2-6.9%);
+cancel half way: falls 0-21% (open stairs), 10-30% (walled).
+
+**First run: the critic diverged and the hop died** (`2026-11-17_10-29-05-skill-v12-critic-diverged`, stopped at
+iteration 1500). At 500 iterations it was the best walled-flight climber so far (done 92/86/84/79/38/4 % at levels
+0-5 against 86/44/33/48/15/4 for v11 on the same terrain, leg split 2-5 deg). Then the value loss doubled every
+~150 iterations (2.3 -> 165), the climb reward fell from 0.17 to 0.03 and at 1500 iterations the policy refused
+almost every stair (0-1 hops per robot). Cause: the end of a flight (arrival on the top, or the 3 s hold after an
+open flight) was reported as a time-out. RSL-RL bootstraps a time-out with the value of the *current* state
+(reward += gamma V(s_t)), so the step that carries the climb reward and the finish bonus (~18) became a fixed point
+V = r / (1 - gamma) ~ 3600; the critic predicted up to 1180 on such states, the advantages turned into noise.
+Fix: a success end is a true terminal (`skill_env.py`: `fell | success` as terminated, falls counted separately in
+`fell_now`). The same bug existed in v11 (arrival as a time-out, at gamma 0.99: x100), which may have limited it.
+Lesson: only real time limits are time-outs.
+
+Run: `2026-11-17_12-08-25-skill-v12` (restarted with the fix), 9000 iterations, log
+`experiments/logs/v12_train.log`.
+
+## 8. Other experiments
 
 **Stand up after a fall (`recovery_env.py`).** v1 never parked (target leg length 0.18 m at the action limit, pose
 reward too narrow, no gradient). v2: 99.1% of 10 979 episodes parked, median 2.0 s. v3 trains from 75–180° (side
@@ -282,7 +329,7 @@ falls and upside down): 98.4% of 9 621, median 2.1 s. On CPU with full CAD colli
 overhangs) → planner and edge guard; RPLIDAR A1 for obstacles; body pitch to look (`RobotCommand.pitch_ref`).
 Through the full CPU stack the exported v1 descended 13 cm stairs and crossed 17 cm gaps from rendered depth.
 
-## 8. What the sequence taught us (for the write-up)
+## 9. What the sequence taught us (for the write-up)
 
 1. **Residual over a model-based controller** gave stable training from step 0 and a safe fallback; the
    from-scratch raw-torque run failed by exploiting the reward.
@@ -303,15 +350,21 @@ Through the full CPU stack the exported v1 descended 13 cm stairs and crossed 17
    now uses 150+ robots per cell with a confidence interval.
 8. **A symmetric task does not give a symmetric policy.** Without a mirror constraint every teacher settled into
    one arbitrary staggered stance and built its skills on it.
+9. **Only real time limits are time-outs.** A success end reported as a time-out is bootstrapped from its own
+   value and, with a bonus on that step and a long horizon, the critic diverges (first v12 run).
 
-## 9. Reproducing
+## 10. Reproducing
 
 ```bash
-# teacher (v11 recipe, continuing v10)
+# checks, then v12 (from v11)
+~/test/isaac-rl/bin/python sim/warp_rl/tests/test_mirror.py
+~/test/isaac-rl/bin/python sim/warp_rl/tests/test_remap.py <v11>/logs/model_17997.pt
 ~/test/isaac-rl/bin/python sim/warp_rl/train.py --task skills --arch encoders --num-envs 4096 \
-    --iterations 4000 --name skill-teacher-v11 --resume <v10>/logs/model_13998.pt
-~/test/isaac-rl/bin/python sim/warp_rl/skill_eval.py --checkpoint <run>/logs/model_N.pt --arch encoders --out <run>
-~/test/isaac-rl/bin/python sim/warp_rl/export_policy.py --task skills --arch encoders --checkpoint <run>/logs/model_N.pt
+    --iterations 9000 --name skill-v12 --init-from-v11 <v11>/logs/model_17997.pt
+~/test/isaac-rl/bin/python sim/warp_rl/skill_eval.py --checkpoint <run>/logs/model_N.pt --out <run>             # skills
+~/test/isaac-rl/bin/python sim/warp_rl/skill_eval.py --checkpoint <run>/logs/model_N.pt --suite assist --controller
+~/test/isaac-rl/bin/python sim/warp_rl/skill_eval.py --checkpoint <run>/logs/model_N.pt --suite cancel
+~/test/isaac-rl/bin/python sim/warp_rl/export_policy.py --task skills --checkpoint <run>/logs/model_N.pt
 MUJOCO_GL=egl python3 sim/scripts/record_skill_video.py out.mp4 --policy <run>/exported --tile stairs --level 5
 ```
 

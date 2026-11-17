@@ -8,7 +8,7 @@ camera sees are measured: inside the D435i field of view and range (87 x 58 deg,
 perception/d435i.py), not occluded by the terrain (ray marched), with noise growing with depth^2, a per-episode
 height bias and a per-episode map offset (odometry drift). Cells keep their last value (memory); cells never seen
 are "unknown" (a mask goes to the policy, their height is the ground under the wheels). Ceilings are seen the
-same way (unknown = open).
+same way (unknown = open). The camera sees the walls of the stairwells (as the teacher's scan does).
 
 Observations:
   teacher   the teacher's (skill_env.py), for the labels
@@ -70,6 +70,10 @@ class StudentEnv(SkillEnv):
         self.cam_step[ids] = 0
 
     # ---------------- simulated D435i map ----------------
+    def _sample_seen(self, xy):
+        """What the camera sees: the ground with the walls (as the teacher's scan), not the walkable floor."""
+        return T.sample_heights(self.Gs, self.terrain["size_x"], self.terrain["size_y"], xy)
+
     def _camera_update(self):
         cfg, N, n, res = self.cfg, self.num_envs, self.cfg.map_cells, self.cfg.map_res
         R = self.R
@@ -82,7 +86,7 @@ class StudentEnv(SkillEnv):
         wxy = (g.float() + 0.5) * res
         si, sj = g[..., 0] % n, g[..., 1] % n
         bi = torch.arange(N, device=self.device)[:, None, None]
-        h_true = self._sample_ground(wxy)
+        h_true = self._sample_seen(wxy)
         v = torch.cat([wxy, h_true[..., None]], -1) - cam[:, None, None, :]
         depth = (v * f[:, None, None, :]).sum(-1)
         x = (v * right[:, None, None, :]).sum(-1)
@@ -90,7 +94,7 @@ class StudentEnv(SkillEnv):
         vis = (depth > 0.28) & (depth < 3.0) & (x.abs() < self.tan_h * depth) & (y.abs() < self.tan_v * depth)
         for t in torch.linspace(0.15, 0.95, cfg.ray_samples):                    # occlusion by the terrain
             q = cam[:, None, None, :] + t * v
-            vis &= q[..., 2] >= self._sample_ground(q[..., 0:2]) - 0.01
+            vis &= q[..., 2] >= self._sample_seen(q[..., 0:2]) - 0.01
         meas = h_true + self.bias[:, None, None] + cfg.depth_noise * depth.square() * torch.randn(
             h_true.shape, generator=self.gen, device=self.device)
         tag_ok = (self.map_tag[bi, si, sj] == g).all(-1)

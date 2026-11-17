@@ -24,8 +24,10 @@ DRIVE (per robot, `drv`; a model of the plant, not part of the controller): join
 no-load speed [rad/s] (> 0: the available torque drops linearly with the speed in the direction of motion, DC
 motor), torque lag [s] (first order: current loop + CAN), total power limit [W] (battery: the motors doing
 positive work share it), and the policy action delay [physics steps] (the previous action stays in use for that
-long after each policy step: inference + communication). The defaults (model limit, no droop / lag / power limit
-/ delay) are the numpy controller.
+long after each policy step: inference + communication). Sensor model (same array): attitude estimate bias
+[rad] (pitch, roll) and hip encoder offsets [rad] (hip_Yp_xp, hip_Ym_xp, hip_Yp_xm, hip_Ym_xm): what the
+controller reads is the truth plus these. The defaults (model limit, no droop / lag / power limit / delay, no
+bias) are the numpy controller.
 """
 import math
 import sys
@@ -360,8 +362,8 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
     # ---------------- state: IMU (base orientation) + encoders ----------------
     q = wp.quat(qpos[w, 4], qpos[w, 5], qpos[w, 6], qpos[w, 3])
     R = quat_rot(q)
-    pitch = wp.asin(wp.clamp(R[2, 1], -1.0, 1.0))
-    roll = wp.atan2(-R[2, 0], R[2, 2])
+    pitch = wp.asin(wp.clamp(R[2, 1], -1.0, 1.0)) + drv[w, 5]       # + attitude estimate bias (sensor model)
+    roll = wp.atan2(-R[2, 0], R[2, 2]) + drv[w, 6]
     yaw = wp.atan2(-R[0, 1], R[1, 1])
     pitch_rate = qvel[w, 3]
     roll_rate = qvel[w, 4]
@@ -378,8 +380,8 @@ def control_kernel(prm: Params, coeffs: wp.array(dtype=wp.vec4),
     J0 = wp.mat22(0.0, 0.0, 0.0, 0.0)
     J1 = wp.mat22(0.0, 0.0, 0.0, 0.0)
     for s in range(2):
-        hp = qpos[w, prm.qp_hipYp[s]]
-        hm = qpos[w, prm.qp_hipYm[s]]
+        hp = qpos[w, prm.qp_hipYp[s]] + drv[w, 7 + 2 * s]             # + encoder calibration offset
+        hm = qpos[w, prm.qp_hipYm[s]] + drv[w, 8 + 2 * s]
         kp = knee_p(prm, hp)
         km = knee_m(prm, hm)
         f = foot(prm, kp, km)
@@ -760,7 +762,8 @@ class BatchedController:
         self.resp = wp.zeros((nworld, NRES), dtype=float, device=device)      # previous policy action
         # per-robot drive (see DRIVE): torque limit, no-load speed (0 = no droop), torque lag [s], power limit [W],
         # action delay [physics steps]; the defaults are the ideal drive of the numpy controller
-        self.drv = wp.array(np.tile([[self.prm.joint_limit, 0.0, 0.0, 1e9, 0.0]], (nworld, 1)).astype(np.float32),
+        # + sensor model: attitude bias (pitch, roll) [rad], hip encoder offsets (Yp_xp, Ym_xp, Yp_xm, Ym_xm) [rad]
+        self.drv = wp.array(np.tile([[self.prm.joint_limit, 0.0, 0.0, 1e9, 0.0] + [0.0] * 6], (nworld, 1)).astype(np.float32),
                             device=device)
 
     def reset(self, d, mask=None):

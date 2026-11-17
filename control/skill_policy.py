@@ -16,12 +16,20 @@ elevation map (unknown cells = the ground under the wheels), its known mask (155
 privileged values.
 The action (in [-1, 1]) x residual_scale + residual_offset is RobotCommand.residual (9th value: jump trigger;
 10th-12th: jump extension, push, tuck length).
+
+v12 (obs_version 4, control/policy_interface.py): one always-on policy. The frame is policy_interface.FRAME_NAMES
+(all commands: speed, yaw rate, leg length, body pitch, responsiveness / 5, the ramped speed target, the skill
+flag; the last action in the pair basis). `act(..., skill=True)` while a skill executes; otherwise the assist
+regime (reduced authority, jump trigger off). The action pairs are turned into the per-side residual by
+policy_interface.to_sides. Do not reset the history when a skill starts.
 """
 import json
 import math
 from pathlib import Path
 
 import numpy as np
+
+import policy_interface as PI
 
 SIDES = ("xp", "xm")
 
@@ -55,26 +63,41 @@ class SkillPolicy:
         self.hscan, self.cscan = scan_points()
         self.reset()
 
+    @property
+    def always_on(self):
+        return self.meta.get("obs_version", 1) >= 4
+
     def reset(self):
         self.hist = None
+        self.ramp = 0.0
         self.action = np.zeros(len(self.scale), np.float32)
         if hasattr(self.net, "reset"):
             self.net.reset()                      # recurrent student: clear the memory at the start of a skill
 
-    def frame(self, ctl, R, gyro, wheel_speeds, cmd):
+    def frame(self, ctl, R, gyro, wheel_speeds, cmd, skill=False, dt=0.02):
         legs = ctl.last_leg
         leg = [legs["xp"].length, legs["xm"].length, legs["xp"].theta, legs["xm"].theta,
                legs["xp"].d_length, legs["xm"].d_length, legs["xp"].d_theta, legs["xm"].d_theta]
+        if self.always_on:
+            a = PI.ramp_accel(cmd.max_accel) * dt                  # the speed target of the controller's ramp
+            self.ramp += max(-a, min(a, cmd.speed_cmd - self.ramp))
+            cmds = [cmd.speed_cmd, cmd.yaw_speed_cmd, cmd.leg_length, cmd.pitch_ref, cmd.max_accel / PI.ACCEL_NORM,
+                    self.ramp, 1.0 if skill else 0.0]
+            return np.concatenate([-R[2, :], gyro, leg, 0.1 * np.asarray(wheel_speeds), [ctl.dx],
+                                   [1.0 if ctl.mode == "operating" else 0.0], cmds, self.action,
+                                   [0.5 * ctl.jump_phase]]).astype(np.float32)
         return np.concatenate([-R[2, :], gyro, leg, 0.1 * np.asarray(wheel_speeds), [ctl.dx],
                                [1.0 if ctl.mode == "operating" else 0.0],
                                [cmd.speed_cmd, cmd.yaw_speed_cmd, cmd.leg_length], self.action,
                                [0.5 * ctl.jump_phase] if self.meta.get("obs_version", 1) >= 2 else []]).astype(np.float32)
 
-    def act(self, ctl, R, gyro, wheel_speeds, cmd, base_z, ground_fn, ceiling_fn, xy, heading, priv, contact_z=None):
+    def act(self, ctl, R, gyro, wheel_speeds, cmd, base_z, ground_fn, ceiling_fn, xy, heading, priv, contact_z=None,
+            skill=False):
         """-> residual tuple for RobotCommand. ground_fn / ceiling_fn: world xy [N, 2] -> heights [N] (ground nan
         where unknown, filled with contact_z = the ground under the wheels; ceiling +inf where open).
-        priv (teacher only): dict(v_body, base_height, torque_limit, friction, mass_scale, grounded)."""
-        f = self.frame(ctl, R, gyro, wheel_speeds, cmd)
+        priv (teacher only): dict(v_body, base_height, torque_limit, friction, mass_scale, grounded).
+        skill (v12): True while a skill executes (the planner's EXECUTE), else the assist regime."""
+        f = self.frame(ctl, R, gyro, wheel_speeds, cmd, skill)
         if self.hist is None:
             self.hist = np.zeros((self.history, len(f)), np.float32)
         self.hist = np.concatenate([self.hist[1:], f[None]], 0)
@@ -84,7 +107,7 @@ class SkillPolicy:
         scan = np.clip(base_z - np.where(known, h, fill) - 0.4, -1.0, 1.0)
         c = np.minimum(ceiling_fn(heading_points(self.cscan, xy, heading)), 10.0)
         clear = np.clip(c - base_z, -0.5, 1.0)
-        if self.meta.get("obs_version", 1) >= 3:                    # student: map + mask, no privileged values
+        if self.meta.get("obs_version", 1) == 3:                    # student: map + mask, no privileged values
             obs = np.concatenate([self.hist.ravel(), scan, known, clear]).astype(np.float32)
         else:
             p = [*priv["v_body"], priv["base_height"], (priv["torque_limit"] - 20.0) / 5.0, priv["friction"],
@@ -94,4 +117,6 @@ class SkillPolicy:
         with self.torch.no_grad():
             a = self.net(self.torch.from_numpy(obs)[None])[0].numpy()
         self.action = np.clip(a, -1.0, 1.0).astype(np.float32)
+        if self.always_on:
+            return tuple(float(v) for v in PI.to_sides(self.action, np.float32(1.0 if skill else 0.0), np))
         return tuple(float(v) for v in self.action * self.scale + self.offset)

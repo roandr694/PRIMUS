@@ -75,7 +75,15 @@ class TruthTerrain:
 
     def __init__(self, ter):
         self.G, self.C, self.res = ter["ground"], ter["ceiling"], ter["fine_res"]
+        self.F = ter.get("floor", ter["ground"])          # walkable surface (no walls): base height
         self.sx, self.sy = ter["size_x"], ter["size_y"]
+
+    def floor(self, xy):
+        G, self.G = self.G, self.F
+        try:
+            return self.ground(xy)
+        finally:
+            self.G = G
 
     def ground(self, xy):
         ny, nx = self.G.shape
@@ -184,7 +192,7 @@ class SkillWorld:
         d = self.data
         R = d.xmat[self.sens.base].reshape(3, 3).copy()
         cz = self.contact_z(ctl.wheel_radius)
-        base_h = float(d.qpos[2] - (self.truth.ground(d.qpos[None, 0:2])[0] if self.truth else cz))
+        base_h = float(d.qpos[2] - (self.truth.floor(d.qpos[None, 0:2])[0] if self.truth else cz))
         if scan == "truth" and self.truth is not None:
             gfn, cfn = self.truth.ground, self.truth.ceiling
         else:

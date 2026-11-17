@@ -231,3 +231,61 @@ cd experiments/analysis_2026-11-16
 ```
 
 Results: `asym_v11.txt`, `asym_more.txt`, `drive_probe.txt` in the same folder.
+
+## 8. What was implemented (2026-11-17)
+
+Code: `control/policy_interface.py` (the interface, one place), `sim/warp_rl/skill_env.py` (rewritten),
+`mirror.py` (symmetry + v11 remap), `skill_terrain.py`, `controller.py` (sensor model), `skill_eval.py`
+(rewritten), `train.py`, `export_policy.py`, `control/skill_policy.py`, `perception/autonomy.py`, `planner.py`,
+`student_env.py`, `sim/scripts/skill_world.py`, `record_skill_video.py`; tests `tests/test_mirror.py`,
+`tests/test_remap.py`.
+
+| # | Status | How |
+|---|---|---|
+| A1 | done | `skill` flag in the frame; the environment (and the robot wrapper) send the trigger as -1 when it is off |
+| A2 | done | skill episodes start in assist for 0.5-2.5 s in 35% of them, go back to assist after an open flight is climbed (3 s hold on top); the robot wrapper never resets the history for a v12 policy |
+| A3 | done | frame = speed, yaw rate, leg length, pitch, responsiveness / 5, ramped speed target, skill flag; roll is not commanded (decision 2) |
+| A4 | done | assist commands: speed +-1.8, raw yaw rate +-1.8, leg 0.20-0.48, pitch 0..-0.35 (30%), the three responsiveness levels, every 2-6 s |
+| A5 | done | `track_speed` compares with the ramped target (`policy_interface.ramp_accel`, measured on the controller) |
+| A6 | done | 12% of skill episodes cancelled 1.5-9 s after the start (flag off, speed 0); `--suite cancel` measures it |
+| A7 | done | assist: continuous actions x 0.5 (`ASSIST_AUTHORITY`); no random authority knob (not needed for the first robot run: the assist regime is already the reduced one) |
+| A8 | done | `policy_interface.SKILLS` (speed, training speeds, validated level) used by the planner and the environment; spawn yaw +-10 deg |
+| R1 | done | mirror augmentation + mirror loss (0.5); `leg_split` = split^2 with no free zone (-5 skill, -20 assist) |
+| R2 | done | actions as pairs; differential ranges 0.08 m (12 deg roll ref), 0.20 rad, 2 N.m, 60 N; `action_diff` cost |
+| R3 | done | fall = -15 (skill) / -25 (assist) - 20 per metre of ground height; gamma 0.995; +10 for finishing a flight |
+| R4 | done | `jump_start` -0.5 per primitive start |
+| R5 | done | `climb` only with the flag on and a forward command |
+| R6 | partial | `wheel_levels` (wheels on levels > 3 cm apart while grounded); no touchdown-lag term (measured in the evaluation instead) |
+| R7 | done | `wheel_slip` = (odometry speed - true speed)^2 while grounded |
+| R8 | done | `leg_load` above 400 N estimated per leg; `bottom_out` |
+| R9 | done | `upright` relative to the pitch command |
+| R10 | done | assist weights: height error, pitch/roll rate, action size, power, split, all several times the skill ones |
+| E1 | done | treads per side 0.26-0.34 m (long 0.25-0.31, walled 0.26-0.34 per flight), rise jitter +-1 cm, hurdle thickness 3-15 cm; evaluation on terrain seed 123 (training 0) |
+| E2 | partial | nosing 1-3 cm (half of the open stairs, the first walled flight); a 0.9 m landing in the middle walled flight; no U-turn stairwell, no open risers (student stage) |
+| E3 | partial | falls per step on the walled flights, projected over 50 steps; no physically chained 24-step flight yet |
+| E4 | done | a level per robot and per type; 20% of episodes at a random level |
+| E5 | done | `bumps` tile (cross slope 2-10 deg, speed bumps 2-10 cm, cables, plateau drops 3-8 cm); friction per episode 0.3-1.25 (assist), 0.5-1.25 (skill) |
+| E6 | done | pushes +-1.0 m/s per axis (assist), +-0.4 (skill, stairs included), every 2-6 s |
+| E7 | done | +-10 deg everywhere (`APPROACH_DEG`) |
+| E8 | decided | not capped: v11 already crosses the top levels (hurdles 24 cm 53%, gaps 80 cm 36%), so they are feasible |
+| S1 | partial | attitude bias +-1 deg per robot, in the controller and the observation; no acceleration-dependent error, no delay |
+| S4 | done | hip encoder offsets +-0.5 deg per joint |
+| S7 | done | contact buffer use logged (`Metrics/contact_buffer_used`): 6-7% on the training terrain |
+| S2, S3, S5, S6 | open | need the robot (bench data) / a CPU test run |
+| P1, P2 | deferred | the teacher keeps the full scan; handled at distillation with the map memory |
+| P4 | done | the student's map sees the walls (as the teacher's scan) |
+| P3, P5, P6 | deferred | student stage |
+| T1 | done | gamma 0.995 |
+| T2 | done | `--init-from-v11` (exact, `tests/test_remap.py`: 4e-6) |
+| T4 | done | `skill_eval.py --suite skill / assist / cancel`, split and one-wheel columns, falls per step, held-out seed |
+| T5 | done | `tests/test_mirror.py`: static permutation checks + mirrored rollouts (map error 0.17-0.36 of the wrong-map error) |
+| T6 | done | commit 7adf7f8 |
+| (new) | done | success ends are terminal, not time-outs (the first v12 run's critic diverged on them) |
+
+Findings on the way:
+- The robot model is mirror symmetric about the plane x = -0.0117 m of the base frame (masses, inertias, sites),
+  but the cylinder-tyre contacts are not exactly symmetric in simulation: two mirrored robots drift apart after
+  ~0.5 s of violent actions. The mirror is a near-symmetry; augmentation is still the right tool.
+- v11 depends on its staggered stance: remapped with the narrow differential ranges it falls more (8 s on mixed
+  levels: gaps 8 -> 17-23%, hurdles 26 -> 40-49%). v12 has to relearn the skills symmetric; the warm start keeps
+  the hop timing.

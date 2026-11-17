@@ -1,7 +1,8 @@
 """Trains the residual policy on the GPU (MuJoCo Warp + RSL-RL PPO).
 
     ~/test/isaac-rl/bin/python sim/warp_rl/train.py --num-envs 4096 --iterations 1500
-    ~/test/isaac-rl/bin/python sim/warp_rl/train.py --task skills --iterations 4000     # skill teacher (skill_env.py)
+    ~/test/isaac-rl/bin/python sim/warp_rl/train.py --task skills --arch encoders --iterations 10000 \
+        --init-from-v11 <v11>/logs/model_17997.pt                                     # v12 always-on policy
     ~/test/isaac-rl/bin/python sim/warp_rl/train.py --task recovery --iterations 1500   # stand up after a fall
     ~/test/isaac-rl/bin/python sim/warp_rl/train.py --task student --teacher <teacher run>/logs/model_3999.pt
 
@@ -65,11 +66,16 @@ DISTILL_CFG = {
 }
 
 
-def skill_ppo(env, arch, base=None):
-    """PPO config for the skill teacher. arch "mlp": one MLP; "encoders": skill_model.SkillTeacherModel
-    (terrain and privileged encoders, then the MLP)."""
+def skill_ppo(env, arch, base=None, symmetry=True, gamma=0.995, mirror_coeff=0.5):
+    """PPO config for the v12 policy. arch "mlp": one MLP; "encoders": skill_model.SkillTeacherModel
+    (terrain and privileged encoders, then the MLP). Mirror symmetry (mirror.py): data augmentation + mirror loss.
+    gamma 0.995 at 50 Hz: a 4 s horizon (a flight takes 10-20 s; 0.99 = 2 s made a late fall cheap)."""
     ppo = copy.deepcopy(base or PPO_CFG)
     ppo["actor"]["distribution_cfg"].update(init_std=0.3, std_range=[0.1, 0.5])
+    ppo["algorithm"]["gamma"] = gamma
+    if symmetry:
+        import mirror
+        ppo["algorithm"]["symmetry_cfg"] = mirror.symmetry_cfg(mirror_coeff)
     if arch == "encoders":
         layout = [env.cfg.history * env.frame_dim, 8, 155, 45]
         for k in ("actor", "critic"):
@@ -143,6 +149,10 @@ def main():
     ap.add_argument("--resume", default=None, help="continue from this checkpoint (weights + optimiser)")
     ap.add_argument("--init-from", default=None,
                     help="skills: start from an older skill checkpoint with fewer actions (weights remapped)")
+    ap.add_argument("--init-from-v11", default=None,
+                    help="skills: start from a v11 teacher checkpoint (inputs and actions remapped, mirror.py)")
+    ap.add_argument("--no-symmetry", action="store_true", help="skills: no mirror augmentation / loss")
+    ap.add_argument("--gamma", type=float, default=0.995, help="skills: discount")
     ap.add_argument("--name", default=None, help="run name (default: warp-residual / skill-teacher)")
     ap.add_argument("--no-eval", action="store_true")
     args = ap.parse_args()
@@ -183,13 +193,13 @@ def main():
                     git_revision=git("rev-parse", "HEAD").strip(), git_dirty=bool(git("status", "--porcelain").strip()),
                     untracked=git("ls-files", "--others", "--exclude-standard").split(),
                     env_cfg=asdict(cfg), ppo_cfg=ppo, status="training")
-    (run / "experiment.json").write_text(json.dumps(manifest, indent=2))
+    (run / "experiment.json").write_text(json.dumps(manifest, indent=2, default=str))
     print(f"run: {run}")
 
     torch.manual_seed(args.seed)
     env = PrimusWarpEnv(cfg, device=args.device, seed=args.seed)
     if args.task == "skills" and args.arch != "mlp":
-        ppo = skill_ppo(env, args.arch, ppo)
+        ppo = skill_ppo(env, args.arch, ppo, symmetry=not args.no_symmetry, gamma=args.gamma)
         manifest["ppo_cfg"] = ppo
         (run / "experiment.json").write_text(json.dumps(manifest, indent=2, default=str))
     if args.task == "student":
@@ -200,7 +210,7 @@ def main():
         t0 = time.time()
         runner.learn(num_learning_iterations=args.iterations, init_at_random_ep_len=True)
         manifest.update(status="trained", train_seconds=round(time.time() - t0, 1))
-        (run / "experiment.json").write_text(json.dumps(manifest, indent=2))
+        (run / "experiment.json").write_text(json.dumps(manifest, indent=2, default=str))
         print(f"done: {run}")
         return
     runner = OnPolicyRunner(env, copy.deepcopy(ppo), log_dir=str(run / "logs"), device=args.device)
@@ -209,6 +219,10 @@ def main():
     if args.resume:
         runner.load(args.resume)
         manifest["resumed_from"] = str(Path(args.resume).resolve())
+    elif args.init_from_v11:
+        import mirror
+        mirror.init_from_v11(runner, args.init_from_v11, cfg.history)
+        manifest["initialised_from"] = str(Path(args.init_from_v11).resolve())
     elif args.init_from:
         init_from_smaller(runner, args.init_from, cfg.history, env.frame_dim, env.num_actions)
         manifest["initialised_from"] = str(Path(args.init_from).resolve())
@@ -222,7 +236,7 @@ def main():
     runner.learn(num_learning_iterations=args.iterations, init_at_random_ep_len=True)
     manifest.update(status="trained", train_seconds=round(time.time() - t0, 1),
                     checkpoint=str(sorted((run / "logs").glob("model_*.pt"), key=lambda p: int(p.stem.split("_")[1]))[-1]))
-    (run / "experiment.json").write_text(json.dumps(manifest, indent=2))
+    (run / "experiment.json").write_text(json.dumps(manifest, indent=2, default=str))
     del runner, env
     torch.cuda.empty_cache()
 
@@ -233,7 +247,7 @@ def main():
             code = subprocess.call(cmd)
             manifest.setdefault("stages", []).append(dict(stage=script, exit_code=code))
         manifest["status"] = "completed" if all(s["exit_code"] == 0 for s in manifest["stages"]) else "failed"
-        (run / "experiment.json").write_text(json.dumps(manifest, indent=2))
+        (run / "experiment.json").write_text(json.dumps(manifest, indent=2, default=str))
     print(f"done: {run}")
 
 

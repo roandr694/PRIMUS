@@ -21,7 +21,7 @@ def main():
     ap.add_argument("--task", choices=("residual", "skills", "recovery", "student"), default="skills")
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--recurrent", action="store_true", help="student checkpoint with a GRU")
-    ap.add_argument("--arch", choices=("mlp", "encoders"), default="mlp", help="skills teacher network")
+    ap.add_argument("--arch", choices=("mlp", "encoders"), default="encoders", help="skills teacher network")
     args = ap.parse_args()
 
     from rsl_rl.runners import DistillationRunner, OnPolicyRunner
@@ -44,7 +44,7 @@ def main():
     elif args.task == "recovery":
         ppo["actor"]["distribution_cfg"].update(init_std=0.5, std_range=[0.1, 0.8])
     if args.task == "skills":
-        ppo = skill_ppo(env, args.arch, ppo)
+        ppo = skill_ppo(env, args.arch, ppo, symmetry=False)
     runner = (DistillationRunner if args.task == "student" else OnPolicyRunner)(env, ppo, log_dir=None, device=args.device)
     runner.load(args.checkpoint)
     out = Path(args.checkpoint).resolve().parents[1] / "exported"
@@ -52,7 +52,9 @@ def main():
     runner.export_policy_to_jit(str(out), "policy.pt")
     runner.export_policy_to_onnx(str(out), "policy.onnx")
     student = args.task == "student"
-    meta = dict(task=args.task, checkpoint=str(Path(args.checkpoint).resolve()), obs_version=3 if student else 2,
+    meta = dict(task=args.task, checkpoint=str(Path(args.checkpoint).resolve()),
+                obs_version=3 if student else 4 if args.task == "skills" else 2,
+                action_basis="pairs (control/policy_interface.py)" if args.task == "skills" else "per side",
                 obs_dim=int(env.obs["student" if student else "policy"].shape[1]), num_actions=env.num_actions,
                 residual_scale=list(getattr(cfg, "residual_scale", ())),
                 residual_offset=list(getattr(cfg, "residual_offset", None) or ()),

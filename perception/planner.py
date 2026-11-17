@@ -14,9 +14,15 @@ the floor under it). Back to level while a skill executes.
 Commands use the controller conventions: speed [m/s] + forward, yaw rate [rad/s] + left (counter-clockwise).
 """
 import math
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 
-SKILL_SPEED = {"stairs_up": 0.6, "stairs_down": 0.4, "curb_up": 0.8, "curb_down": 0.5, "gap": 1.0, "overhang": 0.4}
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "control"))
+import policy_interface as PI  # noqa: E402
+
+# skill speeds: one table with the training environment (control/policy_interface.py)
+SKILL_SPEED = {k: v["speed"] for k, v in PI.SKILLS.items()}
 
 
 def wrap(a):

@@ -12,7 +12,7 @@ the v12 recipe: [v12_plan.md](v12_plan.md). Controller and roadmap details: [con
 | Perception stack (D435i map, RPLIDAR, planner, edge guard, A/B buttons) | done in simulation and on the CPU stack |
 | Stand-up after a fall | trained (98.4% of episodes), on CPU front/back falls work; some side falls stick |
 | Skill teacher | **v11 = best teacher**: hops flush, walled 12-step flights 92–98% at 13–19 cm; asymmetric stance, never trained always-on |
-| Always-on policy (assist + skills, one network) | **v12: being implemented** ([v12_plan.md](v12_plan.md)) |
+| Always-on policy (assist + skills, one network) | **v12 training** since 2026-11-17 (`2026-11-17_12-08-25-skill-v12`, 9000 iterations, ~8.5 h; the first attempt's critic diverged, fixed, see [experiments.md §7](experiments.md)); implementation and checks in [v12_plan.md §8](v12_plan.md) |
 | Camera student | v1 (v3 teacher) and a GRU student (v5) exist; rebuilt after v12 |
 | Real robot | drivers, state estimation, actuator characterisation still open |
 
@@ -27,8 +27,9 @@ nosing, landings and chained flights, per-type curriculum. Decisions taken for t
 
 ## Next, in order
 
-1. v12 code steps 1–6 of [v12_plan.md §4](v12_plan.md) (mirror test, evaluation suite, interface, terrain,
-   rewards, smoke run), then the v12 training and the acceptance table.
+1. v12 training: checks at 500 and 1500 iterations (hops alive in skill, none in assist, leg split falling), then
+   the acceptance table of [v12_plan.md §1](v12_plan.md) with `skill_eval.py --suite skill / assist / cancel`,
+   CPU videos, then a from-scratch run and a second seed with the same recipe.
 2. **Student distillation** from v12 (camera map): short history vs ~1 s vs GRU, with the perception fixes P3–P6.
 3. **Full-stack CPU tests**: rendered depth → map → planner → student → controller, plus guard, A/B and X.
 4. **Real robot:** actuator characterisation (replace the estimates in `hardware/actuators.json`), weigh the robot,

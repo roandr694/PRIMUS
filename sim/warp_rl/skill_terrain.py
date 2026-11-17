@@ -13,8 +13,16 @@ The ground is a coarse heightfield (rough, slopes); sharp features are boxes so 
   hurdles    thin walls (bars/boxes to jump over, 6-24 cm high, 10 cm thick) in three square rings
   gaps_wide  like gaps with trenches 30-80 cm wide: they need a real jump (run at speed, push, tuck)
   stairs_long  8 steps (instead of 5) up to a small platform: the policy must not stop half way
-  stairs_narrow  real stairwells: three straight flights of 12 steps between side walls (0.95-1.3 m wide, treads
-             0.28-0.32 m) from a run-up to a top platform, closed at both ends. No room to climb sideways.
+  stairs_narrow  real stairwells: three straight flights of 12 steps between side walls (0.95-1.3 m wide) from a
+             run-up to a top platform, closed at both ends. No room to climb sideways. The middle flight has a
+             0.9 m landing after its 6th step.
+  bumps      everyday ground for the assist regime: a cross slope (roof along x, 2-10 deg), speed bumps 2-10 cm
+             both ways, cable-like ridges 1-3 cm and a raised plateau with 3-8 cm edges
+
+Variants (`variants=True`, default; drawn from the terrain seed, so another seed is unseen geometry): stair treads
+per side 0.26-0.34 m (stairs_long 0.25-0.31, stairs_wide its level's tread +-3 cm, walled flights 0.26-0.34 per
+flight), rise jitter +-1 cm per step, a step nosing of 1-3 cm on half of the open stairs and on the first walled
+flight, hurdle thickness 3-15 cm per ring. `variants=False` is the v11 geometry.
 
 Besides the collision geometry it returns, for perception, a fine `ground` height grid and a `ceiling` grid
 (lowest overhead surface, +inf where open), both [nrow(y), ncol(x)] at `fine_res`.
@@ -22,7 +30,7 @@ Besides the collision geometry it returns, for perception, a fine `ground` heigh
 import numpy as np
 
 TYPES = ("flat", "rough", "slope", "stairs", "curbs", "gaps", "overhang", "stairs_wide", "hurdles", "gaps_wide",
-         "stairs_long", "stairs_narrow")
+         "stairs_long", "stairs_narrow", "bumps")
 STAIR_RISE = (0.04, 0.07, 0.10, 0.13, 0.16, 0.19)
 CURB_RISE = (0.04, 0.07, 0.10, 0.13, 0.17, 0.20)
 GAP_WIDTH = (0.10, 0.17, 0.24, 0.31, 0.38, 0.45)
@@ -36,6 +44,7 @@ NARROW_STEPS, NARROW_Y0, NARROW_WALL = 12, -2.4, 0.04          # steps, y of the
 NARROW_WALLS_X = (-1.90, -0.52, 0.66, 1.69)
 NARROW_FLIGHTS = ((-1.21, 1.30, 0.30), (0.07, 1.10, 0.32), (1.175, 0.95, 0.28))
 NARROW_TOP_Y, NARROW_FOOT_Y = 2.0, -2.9                         # past these the flight is done (up / down)
+NARROW_LANDING_AFTER = 6                                       # middle flight: 0.9 m landing after this step
 STAIR_HALF = 2.9                # half size of the bottom step: leaves a 1.1 m run-up inside the tile
 
 
@@ -56,25 +65,75 @@ def _hfield_tile(kind, lv, n, res, rng):
         return grade * np.clip(half - np.maximum(r, 0.25 * half), 0, None)
     if kind in ("gaps", "gaps_wide"):
         return np.full((n, n), -0.5)            # everything is a pit; the walkable floor is boxes
+    if kind == "bumps":
+        z = np.tan(np.radians(2.0 + 8.0 * d)) * np.clip(half - np.abs(X), 0, None)     # cross slope driving along y
+        hb = 0.02 + 0.08 * d
+        bump = lambda u: np.clip(1.0 - (u / 0.25) ** 2, 0, None)                        # 0.5 m wide speed bump
+        for yb in rng.uniform(-3.2, 3.2, 3):
+            z += hb * bump(Y - yb)
+        for xb in rng.uniform(-3.2, 3.2, 2):
+            z += hb * bump(X - xb)
+        for _ in range(3):                                                              # cables: one-cell ridges
+            a, c = rng.uniform(0, np.pi), rng.uniform(-3.0, 3.0)
+            z += (0.01 + 0.02 * d) * (np.abs(np.cos(a) * X + np.sin(a) * Y - c) < 0.05)
+        px, py = rng.uniform(-2.0, 2.0, 2)                                              # plateau: small drops
+        z += (0.03 + 0.05 * d) * ((np.abs(X - px) < 1.0) & (np.abs(Y - py) < 1.0))
+        return z
     return np.zeros((n, n))
 
 
-def _box_tile(kind, lv, cx, cy, rng):
+def _rises(r, n, rng, variants):
+    """Cumulative step heights with +-1 cm jitter per step."""
+    return np.cumsum(r + (rng.uniform(-0.01, 0.01, n) if variants else np.zeros(n)))
+
+
+def _nosing(rng, variants, p=0.5):
+    return rng.uniform(0.01, 0.03) if variants and rng.uniform() < p else 0.0
+
+
+def _box_tile(kind, lv, cx, cy, rng, variants=True):
     """Boxes (center xyz, half sizes xyz) of a tile centred at (cx, cy); `bars` are overhead."""
     boxes, bars, walls = [], [], []
     if kind in ("stairs", "stairs_wide", "stairs_long"):
         r = STAIR_RISE[lv]
-        tread = TREAD_WIDE[lv] if kind == "stairs_wide" else TREAD
-        for k in range(1, 9 if kind == "stairs_long" else 6):
-            s = STAIR_HALF - (k - 1) * tread
-            boxes.append(((cx, cy, k * r / 2), (s, s, k * r / 2)))
+        n = 8 if kind == "stairs_long" else 5
+        base = TREAD_WIDE[lv] if kind == "stairs_wide" else TREAD
+        if not variants:
+            t = (base,) * 4
+        elif kind == "stairs":
+            t = rng.uniform(0.26, 0.34, 4)
+        elif kind == "stairs_long":
+            t = rng.uniform(0.25, 0.31, 4)
+        else:
+            t = base + rng.uniform(-0.03, 0.03, 4)
+        hs, nose = _rises(r, n, rng, variants), _nosing(rng, variants)
+        th = min(0.025, 0.5 * r)
+        e = [STAIR_HALF] * 4                                    # extent from the centre: +x, -x, +y, -y
+        for k in range(n):
+            if k:
+                e = [e[i] - t[i] for i in range(4)]
+            x0, x1, y0, y1 = cx - e[1], cx + e[0], cy - e[3], cy + e[2]
+            c, hx, hy = ((x0 + x1) / 2, (y0 + y1) / 2), (x1 - x0) / 2, (y1 - y0) / 2
+            boxes.append(((c[0], c[1], hs[k] / 2), (hx, hy, hs[k] / 2)))
+            if nose:                                            # a slab under the tread, sticking out over the riser
+                boxes.append(((c[0], c[1], hs[k] - th / 2), (hx + nose, hy + nose, th / 2)))
     elif kind == "stairs_narrow":
         r, w = STAIR_RISE[lv], NARROW_WALL
-        top = NARROW_STEPS * r
-        for (xc, width, tread) in NARROW_FLIGHTS:
+        top = 0.0
+        for fi, (xc, width, tread) in enumerate(NARROW_FLIGHTS):
+            if variants:
+                tread = rng.uniform(0.26, 0.30) if fi == 1 else rng.uniform(0.26, 0.34)
+            hs = _rises(r, NARROW_STEPS, rng, variants)
+            nose = _nosing(rng, variants, p=1.0) if fi == 0 else 0.0
+            th = min(0.025, 0.5 * r)
+            y0 = NARROW_Y0
             for k in range(1, NARROW_STEPS + 1):                 # step k: from its riser to the end of the tile
-                y0 = NARROW_Y0 + (k - 1) * tread
-                boxes.append(((cx + xc, cy + (y0 + 3.9) / 2, k * r / 2), (width / 2, (3.9 - y0) / 2, k * r / 2)))
+                boxes.append(((cx + xc, cy + (y0 + 3.9) / 2, hs[k - 1] / 2), (width / 2, (3.9 - y0) / 2, hs[k - 1] / 2)))
+                if nose:
+                    boxes.append(((cx + xc, cy + (y0 - nose + 3.9) / 2, hs[k - 1] - th / 2),
+                                  (width / 2, (3.9 - y0 + nose) / 2, th / 2)))
+                y0 += 0.9 if (variants and fi == 1 and k == NARROW_LANDING_AFTER) else tread
+            top = max(top, hs[-1])
         zw = (top + 0.5) / 2
         for xw in NARROW_WALLS_X:                                # side walls, then the two ends
             walls.append(((cx + xw, cy, zw), (w, 3.9 + w, zw)))
@@ -91,8 +150,9 @@ def _box_tile(kind, lv, cx, cy, rng):
     elif kind == "hurdles":
         h = HURDLE_H[lv]
         for rad in (1.5, 2.4, 3.3):
-            for (ox, oy, sx, sy) in ((0, rad, rad + 0.05, 0.05), (0, -rad, rad + 0.05, 0.05),
-                                     (rad, 0, 0.05, rad + 0.05), (-rad, 0, 0.05, rad + 0.05)):
+            q = rng.uniform(0.015, 0.075) if variants else 0.05            # half thickness
+            for (ox, oy, sx, sy) in ((0, rad, rad + q, q), (0, -rad, rad + q, q),
+                                     (rad, 0, q, rad + q), (-rad, 0, q, rad + q)):
                 boxes.append(((cx + ox, cy + oy, h / 2), (sx, sy, h / 2)))
     elif kind in ("gaps", "gaps_wide"):
         g, t = (GAP_WIDTH if kind == "gaps" else GAP_WIDE)[lv], 0.25                              # gap width, slab half thickness
@@ -113,7 +173,7 @@ def _box_tile(kind, lv, cx, cy, rng):
     return boxes, bars, walls
 
 
-def make_terrain(n_levels=6, types=TYPES, tile=8.0, res=0.08, border=4.0, fine_res=0.04, seed=0):
+def make_terrain(n_levels=6, types=TYPES, tile=8.0, res=0.08, border=4.0, fine_res=0.04, seed=0, variants=True):
     rng = np.random.default_rng(seed)
     n = int(round(tile / res)) + 1
     nb = int(round(border / res))
@@ -129,7 +189,7 @@ def make_terrain(n_levels=6, types=TYPES, tile=8.0, res=0.08, border=4.0, fine_r
             cx = -size_x / 2 + (j0 + (n - 1) / 2) * res
             cy = -size_y / 2 + (i0 + (n - 1) / 2) * res
             centers[lv, t] = (cx, cy)
-            b, o, w = _box_tile(kind, lv, cx, cy, rng)
+            b, o, w = _box_tile(kind, lv, cx, cy, rng, variants)
             boxes += b
             bars += o
             walls += w

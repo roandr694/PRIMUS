@@ -3,8 +3,9 @@ and down the other side, with a camera following from the side.
 
     MUJOCO_GL=egl python3 scripts/record_skill_video.py --policy <run>/exported --level 3 out.mp4
 
-The policy drives the whole time (as during a skill) with a constant forward speed and heading; it sees the true
-terrain (--scan truth, as the teacher trained) or the elevation map of the simulated D435i (--scan map).
+The policy drives the whole time with a constant forward speed and heading; it sees the true terrain (--scan
+truth, as the teacher trained) or the elevation map of the simulated D435i (--scan map). A v12 policy (always on)
+runs in the assist regime until --skill-at seconds, then in the skill regime (as after pressing A).
 """
 import argparse
 import math
@@ -37,6 +38,7 @@ def main():
     ap.add_argument("--speed", type=float, default=0.6)
     ap.add_argument("--leg", type=float, default=0.30)
     ap.add_argument("--seconds", type=float, default=16.0)
+    ap.add_argument("--skill-at", type=float, default=1.5, help="v12: the skill flag goes on at this time [s]")
     ap.add_argument("--scan", choices=("truth", "map"), default="truth")
     ap.add_argument("--torque", type=float, default=20.0)
     ap.add_argument("--width", type=int, default=1280)
@@ -76,8 +78,9 @@ def main():
                                  leg_length=args.leg)
             if operating:
                 inputs = world.policy_inputs(ctl, out, auto, args.scan)
+                kw = dict(skill=t >= args.skill_at) if auto.policy.always_on else {}
                 cmd = RobotCommand(speed_cmd=pilot.speed_cmd, yaw_speed_cmd=pilot.yaw_speed_cmd,
-                                   leg_length=args.leg, residual=auto.policy.act(cmd=pilot, **inputs))
+                                   leg_length=args.leg, residual=auto.policy.act(cmd=pilot, **inputs, **kw))
             else:
                 cmd = pilot
         out = ctl.apply(d, cmd)

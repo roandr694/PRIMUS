@@ -167,6 +167,13 @@ class PrimusWarpEnv(VecEnv):
             self.ttype[ids] = torch.randint(0, len(self.terrain["types"]), (len(ids),), generator=self.gen,
                                             device=self.device)
 
+    def _residual(self, actions):
+        """Clipped action -> controller residual (per side, physical units)."""
+        return actions * self.res_scale + self.res_offset
+
+    def _push_speed(self, ids):
+        return torch.full((len(ids),), self.cfg.push_speed, device=self.device)
+
     def _spawn(self, ids):
         """Start position and heading: around the tile centre."""
         n = len(ids)
@@ -369,13 +376,14 @@ class PrimusWarpEnv(VecEnv):
         self.last_actions.copy_(self.actions)
         self.actions.copy_(actions.clamp(-1, 1))
         self.resp.copy_(self.res)                      # previous action: still applied during the action delay
-        self.res[:, :self.num_actions] = self.actions * self.res_scale + self.res_offset
+        self.res[:, :self.num_actions] = self._residual(self.actions)
         self.cs[:, C.S["sub"]] = 0.0
         # pushes: change the horizontal base velocity
         self.push_timer -= self.dt
         pushed = (self.push_timer <= 0).nonzero().flatten()
         if len(pushed):
-            self.qvel[pushed, 0:2] += self._rand(len(pushed) * 2, -cfg.push_speed, cfg.push_speed).view(-1, 2)
+            amp = self._push_speed(pushed)[:, None]
+            self.qvel[pushed, 0:2] += amp * self._rand(len(pushed) * 2, -1.0, 1.0).view(-1, 2)
             self.push_timer[pushed] = self._rand(len(pushed), *cfg.push_interval_s)
         self._pre_physics()
         wp.capture_launch(self.graph, stream=self.stream)
