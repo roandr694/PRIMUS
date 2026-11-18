@@ -1,7 +1,8 @@
 # v12: everything that has to be right before the next training
 
 *2026-11-16, decisions 2026-11-17. Audit of the whole skill-training stack (environment, rewards, curriculum, simulation, perception
-hand-off, PPO setup) against the product the owner wants. Nothing here has been trained yet. Earlier diagnosis:
+hand-off, PPO setup) against the product the owner wants. Trained 2026-11-17; results against this plan in
+[experiments.md §7](experiments.md#v12-result-evaluated-2026-11-18-seed-123--unseen-geometry-random-motors-150-robots-per-cell). Earlier diagnosis:
 [diagnosis_2026-11-16.md](diagnosis_2026-11-16.md).*
 
 Evidence tags: **[M]** measured in this audit (data in `experiments/analysis_2026-11-16/`), **[C]** read in the

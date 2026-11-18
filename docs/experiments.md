@@ -271,7 +271,7 @@ v11 is the best teacher so far: about 12 hops per robot for 11–12 steps on the
 
 These findings, and a full audit of the stack, are the input of v12: [v12_plan.md](v12_plan.md).
 
-## 7. v12: one always-on policy, assist + skills, mirror symmetric (training since 2026-11-17)
+## 7. v12: one always-on policy, assist + skills, mirror symmetric (2026-11-17)
 
 Design and audit: [v12_plan.md](v12_plan.md) (§8 lists what was implemented). In short: a `skill` flag picks the
 regime (assist: the remote's full envelope, strong pushes, slippery ground, reduced authority, jump off, rewarded
@@ -315,8 +315,63 @@ Fix: a success end is a true terminal (`skill_env.py`: `fell | success` as termi
 `fell_now`). The same bug existed in v11 (arrival as a time-out, at gamma 0.99: x100), which may have limited it.
 Lesson: only real time limits are time-outs.
 
-Run: `2026-11-17_12-08-25-skill-v12` (restarted with the fix), 9000 iterations, log
+Run: `2026-11-17_12-08-25-skill-v12` (restarted with the fix), 9000 iterations, 8 h 20 min, log
 `experiments/logs/v12_train.log`.
+
+**Training.** Healthy throughout: value loss 1.4-1.9 (the diverged run was at 25-40 by iteration 800), mirror loss
+0.45 -> 0.002, leg split in assist ~0.9 deg, zero jump starts in assist, cancelled-and-fell ~5%. From iteration
+~2500 the training curves went flat (curriculum level ~2.7, skill fell 15-34% per window with no trend). The
+evaluation below shows that the plateau hid real progress in assist and a shift from falling to refusing in skills.
+
+### v12 result (evaluated 2026-11-18, seed 123 = unseen geometry, random motors, 150 robots per cell)
+
+Final checkpoint `model_8999.pt` against the iteration-2500 checkpoint and v11 remapped to the v12 interface. Raw
+outputs: `experiments/v12_eval/` (`<suite>_{final,2500,v11}.txt`, `stairs_final.txt`); JSONs in the run directory.
+
+**Assist** (18 s, +-1 m/s pushes every 2-6 s), falls/min:
+
+| terrain | LQR alone | v11 | v12 it2500 | **v12 final** |
+|---|---|---|---|---|
+| flat | 0.34 | 0.19 | 0.11 | **0.07** |
+| rough | 0.51 | 0.37 | 0.11 | **0.06** |
+| slope | 1.26 | 0.75 | 0.54 | **0.39** |
+| bumps | 2.05 | 1.20 | 0.78 | **0.57** |
+
+Final on flat: leg error 0.7 cm (v11 3.1), roll 0.9 deg (v11 2.6), leg split 0.3 deg (v11 3.0), power 13.3 W (v11
+18.6, LQR 13.4), zero jumps. The assist regime meets its goal: it falls 5x less than the LQR and rides like it.
+
+**Skills** (18 s), done / fell / refused % at levels 0-5:
+
+| terrain | v11 | v12 final |
+|---|---|---|
+| stairs up | 100/0/0 89/9/2 88/12/0 89/11/0 86/11/3 85/8/7 | 100/0/0 **45/15/40** 70/21/9 93/6/2 97/3/0 75/8/16 |
+| stairs_long down | 78/22 65/35 66/34 62/38 70/30 68/32 | 91/7 97/3 96/4 92/8 93/7 92/7 |
+| stairs_wide down | 96/4 86/14 76/24 74/26 80/20 73/27 | 95/5 89/10 94/6 96/4 71/29 74/26 |
+| curbs | 93/7/0 78/22/0 67/32/1 59/41/0 51/47/1 58/37/5 | 97/3/0 73/14/13 50/16/34 54/18/28 43/26/31 38/22/40 |
+| gaps | 88/12/0 71/25/3 51/36/13 51/48/1 51/45/3 54/46/0 | 88/12/0 83/14/3 69/14/17 55/8/37 47/9/45 15/4/81 |
+| overhang | 97/3 77/23 78/22 65/35 55/45 63/37 | 96/4 89/11 93/7 82/18 56/44 48/52 |
+| hurdles | 58/42/0 51/49/0 44/56/0 28/65/7 30/69/1 16/80/4 | 63/20/17 5/14/81 59/15/26 19/16/65 39/32/29 15/61/24 |
+| gaps_wide | 60/37/3 44/54/2 36/64/0 26/74/0 17/83/0 3/97/0 | 63/3/34 47/10/43 3/3/94 0/2/98 0/1/99 0/2/98 |
+| walled flights up, falls/step % | 0.76 4.41 4.84 4.23 4.36 6.01 | 0.13 3.27 1.17 0.37 0.95 3.15 |
+
+Leg split in skills 1-2 deg (v11 4-11): the staggered stance is gone. With 25 s per robot the walled flights up
+reach done 90/7/46/70/60/35 % and falls per step 0.28/3.38/2.07/1.34/1.93/3.71 %.
+
+**Cancel half way**, fell % at levels 0-5: open stairs v11 0.7/18.7/20.7/9.7/4.4/8.5, it2500 2.1/4.3/4.3/3.5/1.5/0.7,
+final 2.8/12.2/10.0/17.4/5.1/7.1; walled v11 10.8/28.9/24.6/17.0/12.3/12.4, final 1.4/2.1/7.0/9.2/8.0/20.7.
+
+**Reading.**
+1. Assist: clearly better than everything before, and it kept improving after the training curves went flat.
+2. Skills: falls dropped almost everywhere (long and wide descents, gaps, overhang, walled flights x1.5-11 fewer
+   falls per step), but where v11 tried and fell v12 now **refuses**: 30-80% on curbs, gaps and hurdles at high
+   levels, ~100% on wide gaps from level 2. Refusing is too cheap against a fall priced by height.
+3. A **level-1 hole** on stairs: refusals 40% (open), 52% (wide), 64% (walled) at level 1 while levels 2-4 are
+   climbed. Suspected terrain-generator issue at that level; not yet analysed.
+4. The stairs goal (falls per step <= 0.15%) is met only at level 0; levels 1-5 are at 1-4%.
+5. Cancel on open stairs got worse between iteration 2500 and the end.
+
+Next: analyse the level-1 hole; make refusal on feasible terrain cost something (curriculum and reward); continue
+from `model_8999.pt` with those fixes. Videos of the final checkpoint not recorded yet.
 
 ## 8. Other experiments
 
@@ -352,6 +407,9 @@ Through the full CPU stack the exported v1 descended 13 cm stairs and crossed 17
    one arbitrary staggered stance and built its skills on it.
 9. **Only real time limits are time-outs.** A success end reported as a time-out is bootstrapped from its own
    value and, with a bonus on that step and a long horizon, the critic diverges (first v12 run).
+10. **Flat training curves can hide progress, and fewer falls can mean more refusals.** v12's curves stalled at
+    iteration 2500 while assist kept improving; pricing falls by height made refusing the cheaper option. Always
+    read falls together with refusals, on unseen terrain.
 
 ## 10. Reproducing
 

@@ -67,6 +67,6 @@ regenerating from CAD) is in [`sim/README.md`](sim/README.md). GPU reinforcement
 - [x] Isaac Sim USD conversion with closed loops
 - [ ] actuator characterisation (peak torque, speed, rotor inertia); current values are placeholders
 - [ ] real-robot drivers and state estimation (`robot/`), sim-to-real of controller and policy
-- [ ] autonomous skills with perception (stairs, curbs, gaps, hurdles, two-wheel hops): teacher v11 done (hops flush on walled 12-step flights), v12 = one always-on policy (assist + skills, mirror symmetric) in training, student and robot next; see [status and plan](docs/status_and_plan.md) and the [experiment log](docs/experiments.md)
+- [ ] autonomous skills with perception (stairs, curbs, gaps, hurdles, two-wheel hops): teacher v11 done (hops flush on walled 12-step flights), v12 = one always-on policy (assist + skills, mirror symmetric) trained: assist falls 5x less than the LQR, skills fall less than v11 but refuse too often, follow-up next, student and robot next; see [status and plan](docs/status_and_plan.md) and the [experiment log](docs/experiments.md)
 
 The workspace around this repository (experiments, videos, caches) is described in [docs/workspace.md](docs/workspace.md).
