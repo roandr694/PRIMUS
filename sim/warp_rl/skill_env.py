@@ -87,6 +87,11 @@ class SkillCfg(EnvCfg):
     # tile type probabilities, in skill_terrain.TYPES order (assist tiles: 0.5 in total)
     type_weights: tuple = (0.12, 0.12, 0.10, 0.07, 0.05, 0.06, 0.04, 0.03, 0.06, 0.05, 0.05, 0.09, 0.16)
     terrain_variants: bool = True
+    rise_jitter: float = 0.015            # +- per step [m]: 4/7/10... cm levels overlap, no untrained band (eval: 0.01)
+    # refusing: stalled with the flag on and a speed target (v12: stood against 6-7 cm risers, no hop)
+    stall_speed: float = 0.1              # [m/s] forward speed below which the robot counts as stalled
+    stall_grace_s: float = 0.5            # stalled this long before the cost starts
+    stall_end_s: float = 5.0              # stalled this long: the episode ends as a refusal
     # curriculum: a level per robot and type
     init_max_level: int = 5
     p_random_level: float = 0.2
@@ -108,18 +113,18 @@ class SkillCfg(EnvCfg):
         lin_vel_z=-0.2, action=-0.01, action_diff=-0.05, action_rate=-0.05, torque=-1e-4, gear_contact=-2.0,
         body_contact=-3.0, impact=-1.0, stand_still=-1.0, climb=40.0, hip_limit=-20.0, leg_split=-5.0,
         power=-0.002, extension_speed=-0.5, action_excess=-0.2, wheel_levels=-1.0, wheel_slip=-0.5,
-        leg_load=-0.05, bottom_out=-1.0,
-        termination=-15.0, fall_height=-20.0, jump_start=-0.5, finish=10.0))
+        leg_load=-0.05, bottom_out=-1.0, stall=-2.0,
+        termination=-15.0, fall_height=-20.0, jump_start=-0.5, finish=10.0, refuse=-6.0))
     rew_assist: dict = field(default_factory=lambda: dict(
         track_speed=3.0, track_yaw=1.5, track_leg=1.0, leg_error=-200.0, upright=-5.0, ang_vel_xy=-1.0,
         lin_vel_z=-1.0, action=-0.3, action_diff=-0.5, action_rate=-0.2, torque=-1e-4, gear_contact=-2.0,
         body_contact=-3.0, impact=-1.0, stand_still=-2.0, climb=0.0, hip_limit=-20.0, leg_split=-20.0,
         power=-0.01, extension_speed=-0.5, action_excess=-0.2, wheel_levels=0.0, wheel_slip=-1.0,
-        leg_load=-0.05, bottom_out=-1.0,
-        termination=-25.0, fall_height=-20.0, jump_start=0.0, finish=0.0))
+        leg_load=-0.05, bottom_out=-1.0, stall=0.0,
+        termination=-25.0, fall_height=-20.0, jump_start=0.0, finish=0.0, refuse=0.0))
 
 
-EVENTS = ("termination", "fall_height", "jump_start", "finish")       # not multiplied by dt
+EVENTS = ("termination", "fall_height", "jump_start", "finish", "refuse")       # not multiplied by dt
 
 
 class SkillEnv(PrimusWarpEnv):
@@ -146,7 +151,8 @@ class SkillEnv(PrimusWarpEnv):
 
     # ---------------- setup ----------------
     def _make_terrain(self, seed):
-        return ST.make_terrain(n_levels=self.cfg.terrain_levels, seed=seed, variants=self.cfg.terrain_variants)
+        return ST.make_terrain(n_levels=self.cfg.terrain_levels, seed=seed, variants=self.cfg.terrain_variants,
+                               rise_jitter=self.cfg.rise_jitter)
 
     def _setup_randomization(self):
         super()._setup_randomization()
@@ -190,6 +196,8 @@ class SkillEnv(PrimusWarpEnv):
         self.speed_lo, self.speed_hi = torch.tensor(lo, device=dev), torch.tensor(hi, device=dev)
         self.flight = z(N)                                         # stairs_narrow: +1 climbing, -1 descending, 0 other
         self.goal_heading, self.last_vz, self.ep_cmd_dist = z(N), z(N), z(N)
+        self.stall_t = z(N)
+        self.refused_now = torch.zeros(N, dtype=torch.bool, device=dev)
         self.since_jump = z(N) + 10.0                     # seconds since the jump primitive was last active
         self.jphase_prev = z(N)
         self.ground_best, self.ground0 = z(N), z(N)       # highest ground reached on the wheels, ground at spawn
@@ -342,6 +350,7 @@ class SkillEnv(PrimusWarpEnv):
         self.since_jump[ids] = 10.0
         self.jphase_prev[ids] = 0.0
         self.ep_cmd_dist[ids] = 0.0
+        self.stall_t[ids] = 0.0
         g0 = self._sample_ground(self.qpos[ids, 0:2])
         self.ground0[ids], self.ground_best[ids] = g0, g0
         # regime schedule
@@ -565,6 +574,10 @@ class SkillEnv(PrimusWarpEnv):
             bottom_out=((Ls < self.min_len + 0.01).any(-1) & grounded).float(),
             jump_start=jump_start.float(),
         )
+        # stalled with the flag on and a speed target, short of the goal (a hop in progress does not count)
+        stalled = skill & (self.ramp > 0.2) & (v_fwd < cfg.stall_speed) & ~self.finished & (self.since_jump > 0.5)
+        self.stall_t = torch.where(stalled, self.stall_t + self.dt, torch.zeros_like(self.stall_t))
+        terms["stall"] = (self.stall_t > cfg.stall_grace_s).float()
         # falls: tilted, chassis touching a box feature or too low over the heightfield (it does not collide
         # with it), down a gap, or the controller protection cut the torques
         tilt = grav_b[:, 2] > -math.cos(math.radians(50.0))
@@ -590,7 +603,9 @@ class SkillEnv(PrimusWarpEnv):
         # 0.995), the critic diverged and the hop died (first v12 run, 2026-11-17)
         success = self.arrived | (self.finished & (t - self.t_finish > cfg.hold_after_finish_s))
         timeout = (self.episode_length_buf >= self.max_episode_length) | off_map
-        self.fell_now = fell
+        refused = (self.stall_t > cfg.stall_end_s) & ~fell & ~success
+        self.fell_now, self.refused_now = fell, refused
+        terms["refuse"] = refused.float()
         terms["termination"] = fell.float()
         terms["fall_height"] = fell.float() * g.clamp(0.0, 3.0)        # a fall from higher up costs more
         rew = torch.zeros(self.num_envs, device=self.device)
@@ -606,7 +621,7 @@ class SkillEnv(PrimusWarpEnv):
         self.ep_skill_steps += skill.float()
         self.ep_jumps_assist += (jump_start & ~skill).float()
         self.ep_split += split.abs() * oper * ~skill
-        return rew, fell | success, timeout & ~fell & ~success
+        return rew, fell | success | refused, timeout & ~fell & ~success & ~refused
 
     def _log_and_curriculum(self, ids, terminated, timeout):
         terminated = self.fell_now                     # falls only (a success also ends the episode, not bootstrapped)
@@ -627,6 +642,7 @@ class SkillEnv(PrimusWarpEnv):
             log["Assist/leg_split_deg"] = (self.ep_split[ids] / assist_steps)[~st].mean() * 57.3
         if st.any():
             log["Skill/fell"] = terminated[ids][st].float().mean()
+            log["Skill/refused"] = self.refused_now[ids][st].float().mean()
             log["Skill/cancelled_fell"] = (terminated[ids] & self.cancelled[ids]).float().sum() / \
                 self.cancelled[ids].float().sum().clamp_min(1)
         log["Assist/jump_starts"] = self.ep_jumps_assist[ids].sum()
@@ -650,7 +666,7 @@ class SkillEnv(PrimusWarpEnv):
             up = torch.where(narrow, self.arrived[ids], up)
             if narrow.any():
                 log["Metrics/flights_done"] = self.arrived[ids][narrow].float().mean()
-            down = terminated[ids] | (dist < 0.3 * self.ep_cmd_dist[ids])
+            down = terminated[ids] | self.refused_now[ids] | (dist < 0.3 * self.ep_cmd_dist[ids])
             up = torch.where(assist, timeout[ids] & (err < 0.35), up)
             down = torch.where(assist, terminated[ids], down)
             cancelled = self.cancelled[ids]                      # a cancelled skill says nothing about the level

@@ -384,6 +384,24 @@ Next: a no-progress cost while the flag is on (stalled with a positive speed tar
 failure in the curriculum, rises drawn continuously within each level band, checkpoint choice by evaluation; make refusal on feasible terrain cost something (curriculum and reward); continue
 from `model_8999.pt` with those fixes. Videos of the final checkpoint not recorded yet.
 
+### v12b: v12 continued with a price on refusing (training since 2026-11-18)
+
+Changes (`skill_env.py`): a `stall` cost (-2/s) when the flag is on, the ramp target is above 0.2 m/s and the robot
+moves below 0.1 m/s for more than 0.5 s (not within 0.5 s of a hop, not after the goal); stalled for 5 s ends the
+episode as a refusal (`refuse` -6, a true terminal, counted as a level down); rise jitter +-1.5 cm per step in
+training so the levels overlap (evaluation keeps the v12 terrain: +-1 cm, refusals not ended). Resumed from v12
+`model_8999.pt` for 4000 iterations (`2026-11-17_22-49-12-skill-v12b`, log `experiments/logs/v12b_train.log`).
+
+**First attempt destroyed the policy in two iterations** (archived as `...-skill-v12b-lr-reset`): RSL-RL restores
+the optimiser but its adaptive schedule restarts at the configured 1e-3 and overwrites the optimiser's lr after the
+first mini-batch; v12 had ended at 1e-5, so the first updates were ~100x too large (stairs: 91-100% falls at
+`model_9000`). Fix in `train.py`: on `--resume` the schedule starts from the optimiser's lr. The checkpoints also
+show that v12's lr stayed at 1e-5 to 8e-5 for the whole run (the adaptive KL schedule at its floor), which likely
+explains the plateau after iteration 2500; cause not yet analysed (action std ~0.10, mirror loss).
+
+After 250 iterations (rises patched to 5/6/7/10/13/16 cm, open stairs up, done %): v12 final 84/72/52/74/93/82,
+v12b 91/89/92/98/98/87; it hops the 6-7 cm steps. Curbs: refusals at levels 1-5 from 13-40% to 10-28%.
+
 ## 8. Other experiments
 
 **Stand up after a fall (`recovery_env.py`).** v1 never parked (target leg length 0.18 m at the action limit, pose

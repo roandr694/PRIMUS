@@ -218,6 +218,10 @@ def main():
     head = [m for m in runner.alg.actor.mlp if isinstance(m, torch.nn.Linear)][-1]
     if args.resume:
         runner.load(args.resume)
+        # RSL-RL restores the optimiser (its lr) but not the adaptive schedule's own learning_rate, which restarts
+        # at the configured 1e-3 and is written back to the optimiser after the first mini-batch: v12 ended at
+        # 1e-5, and the 100x larger first updates destroyed the policy within two iterations (v12b, 2026-11-18)
+        runner.alg.learning_rate = runner.alg.optimizer.param_groups[0]["lr"]
         manifest["resumed_from"] = str(Path(args.resume).resolve())
     elif args.init_from_v11:
         import mirror

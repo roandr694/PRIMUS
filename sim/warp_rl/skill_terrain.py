@@ -82,9 +82,12 @@ def _hfield_tile(kind, lv, n, res, rng):
     return np.zeros((n, n))
 
 
+RISE_JITTER = 0.01                       # +- per step [m]; make_terrain(rise_jitter=...) overrides it
+
+
 def _rises(r, n, rng, variants):
-    """Cumulative step heights with +-1 cm jitter per step."""
-    return np.cumsum(r + (rng.uniform(-0.01, 0.01, n) if variants else np.zeros(n)))
+    """Cumulative step heights with +-RISE_JITTER per step."""
+    return np.cumsum(r + (rng.uniform(-RISE_JITTER, RISE_JITTER, n) if variants else np.zeros(n)))
 
 
 def _nosing(rng, variants, p=0.5):
@@ -173,7 +176,10 @@ def _box_tile(kind, lv, cx, cy, rng, variants=True):
     return boxes, bars, walls
 
 
-def make_terrain(n_levels=6, types=TYPES, tile=8.0, res=0.08, border=4.0, fine_res=0.04, seed=0, variants=True):
+def make_terrain(n_levels=6, types=TYPES, tile=8.0, res=0.08, border=4.0, fine_res=0.04, seed=0, variants=True,
+                 rise_jitter=0.01):
+    global RISE_JITTER
+    RISE_JITTER = rise_jitter
     rng = np.random.default_rng(seed)
     n = int(round(tile / res)) + 1
     nb = int(round(border / res))

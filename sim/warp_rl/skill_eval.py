@@ -125,7 +125,8 @@ def make_env(args, types, L, suite):
     use = [ST.TYPES.index(t) for t in types]
     N = len(use) * L * args.per
     common = dict(num_envs=N, curriculum=False, random_tile_type=False, p_parked_start=0.0,
-                  episode_s=args.seconds + 1.0, p_climb=args.p_climb, terrain_variants=not args.v11_terrain)
+                  episode_s=args.seconds + 1.0, p_climb=args.p_climb, terrain_variants=not args.v11_terrain,
+                  rise_jitter=0.01, stall_end_s=1e9)    # the v12 evaluation terrain; refusals counted, not ended
     if suite == "assist":
         cfg = SkillCfg(**common, push_speed=args.push, push_interval_s=(2.0, 6.0))
     else:
