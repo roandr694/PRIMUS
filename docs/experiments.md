@@ -370,7 +370,18 @@ final 2.8/12.2/10.0/17.4/5.1/7.1; walled v11 10.8/28.9/24.6/17.0/12.3/12.4, fina
 4. The stairs goal (falls per step <= 0.15%) is met only at level 0; levels 1-5 are at 1-4%.
 5. Cancel on open stairs got worse between iteration 2500 and the end.
 
-Next: analyse the level-1 hole; make refusal on feasible terrain cost something (curriculum and reward); continue
+**The level-1 hole analysed (2026-11-18, `experiments/analysis_2026-11-18/`).** Not a terrain bug. With the stair
+rise patched to 5/6/7/8/9/11 cm (open stairs, climbing, 150 robots per cell), done/fell/refused %: final checkpoint
+89/6/5, 65/15/21, **49/12/39**, 89/6/5, 92/7/1, 75/15/10; iteration 2500: 95/5/0, 90/5/5, 88/6/6, 91/7/2, 97/3/0,
+91/8/1. The refusing robots are not stopping at the foot: the skill flag is still on, most have climbed 1-3+
+steps, they make **no hop** and stand still against a riser for ~2 s on average. The final policy learnt a
+threshold: roll over steps below ~8 cm (works at 5 cm), hop from 8 cm. At 6-7 cm (0.55-0.65 of the 10.75 cm wheel
+radius) rolling stalls, and nothing in the reward makes stalling expensive. Iteration 2500 hopped these steps.
+Causes: hop costs (`jump_start` -0.5, falls priced by height) against no cost for standing still; discrete rises
+(4/7/10 cm) with a curriculum that spends little time at level 1, so the boundary sits in a poorly trained band.
+
+Next: a no-progress cost while the flag is on (stalled with a positive speed target), refusal counted as a
+failure in the curriculum, rises drawn continuously within each level band, checkpoint choice by evaluation; make refusal on feasible terrain cost something (curriculum and reward); continue
 from `model_8999.pt` with those fixes. Videos of the final checkpoint not recorded yet.
 
 ## 8. Other experiments
