@@ -12,7 +12,7 @@ the v12 recipe: [v12_plan.md](v12_plan.md). Controller and roadmap details: [con
 | Perception stack (D435i map, RPLIDAR, planner, edge guard, A/B buttons) | done in simulation and on the CPU stack |
 | Stand-up after a fall | trained (98.4% of episodes), on CPU front/back falls work; some side falls stick |
 | Skill teacher | **v11 = best teacher**: hops flush, walled 12-step flights 92–98% at 13–19 cm; asymmetric stance, never trained always-on |
-| Always-on policy (assist + skills, one network) | **v12 trained** (`2026-11-17_12-08-25-skill-v12`, 9000 iterations). Assist: 5x fewer falls than the LQR (0.07/min on flat with pushes), rides like it, no hops. Skills: far fewer falls than v11 and no stagger, but many refusals (curbs, gaps, hurdles, wide gaps) and a refusal hole at stairs level 1; stairs falls/step 1-4% above level 0 (goal 0.15%). See [experiments.md §7](experiments.md) |
+| Always-on policy (assist + skills, one network) | **v12b = current best** (`2026-11-17_23-12-23-skill-v12b/logs/model_12998.pt`): assist falls 0.05/min on flat with pushes (LQR 0.34); walled flights 0.1-0.7% falls per step up to 17 cm (goal 0.15%), 1.8% at 19 cm; better than v11 and v12 on every skill. See [experiments.md §7](experiments.md) |
 | Camera student | v1 (v3 teacher) and a GRU student (v5) exist; rebuilt after v12 |
 | Real robot | drivers, state estimation, actuator characterisation still open |
 
@@ -27,8 +27,8 @@ nosing, landings and chained flights, per-type curriculum. Decisions taken for t
 
 ## Next, in order
 
-1. **v12 follow-up:** analyse the stairs level-1 refusal hole; make refusing feasible terrain cost something
-   (curriculum + reward); continue from `model_8999.pt`; record CPU videos; then a second seed.
+1. **v12b follow-up:** CPU videos; the lr floor of the adaptive schedule (v12 trained at 1e-5 to 8e-5); a second
+   seed; decide whether 19 cm and wide gaps from level 3 are in reach of the plant.
 2. **Student distillation** from v12 (camera map): short history vs ~1 s vs GRU, with the perception fixes P3–P6.
 3. **Full-stack CPU tests**: rendered depth → map → planner → student → controller, plus guard, A/B and X.
 4. **Real robot:** actuator characterisation (replace the estimates in `hardware/actuators.json`), weigh the robot,

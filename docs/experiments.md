@@ -384,7 +384,7 @@ Next: a no-progress cost while the flag is on (stalled with a positive speed tar
 failure in the curriculum, rises drawn continuously within each level band, checkpoint choice by evaluation; make refusal on feasible terrain cost something (curriculum and reward); continue
 from `model_8999.pt` with those fixes. Videos of the final checkpoint not recorded yet.
 
-### v12b: v12 continued with a price on refusing (training since 2026-11-18)
+### v12b: v12 continued with a price on refusing (2026-11-18)
 
 Changes (`skill_env.py`): a `stall` cost (-2/s) when the flag is on, the ramp target is above 0.2 m/s and the robot
 moves below 0.1 m/s for more than 0.5 s (not within 0.5 s of a hop, not after the goal); stalled for 5 s ends the
@@ -401,6 +401,31 @@ explains the plateau after iteration 2500; cause not yet analysed (action std ~0
 
 After 250 iterations (rises patched to 5/6/7/10/13/16 cm, open stairs up, done %): v12 final 84/72/52/74/93/82,
 v12b 91/89/92/98/98/87; it hops the 6-7 cm steps. Curbs: refusals at levels 1-5 from 13-40% to 10-28%.
+
+### v12b result (evaluated 2026-11-18, same protocol as v12; `experiments/v12b_eval/`)
+
+Run `2026-11-17_23-12-23-skill-v12b` (the lr-fixed relaunch). Skill suite on checkpoints 10000/11000/12000/12998:
+the last one is the best on almost every cell and is the v12b policy (`model_12998.pt`).
+
+| | v11 | v12 final | **v12b 12998** |
+|---|---|---|---|
+| assist falls/min flat / rough / slope / bumps | 0.19 / 0.37 / 0.75 / 1.20 | 0.07 / 0.06 / 0.39 / 0.57 | **0.05 / 0.06 / 0.27 / 0.54** |
+| stairs up, done % levels 0-5 | 100 89 88 89 86 85 | 100 45 70 93 97 75 | **97 98 82 100 100 92** |
+| walled flights up, done % (18 s) | 91 49 30 37 26 1 | 91 16 47 72 52 30 | **85 87 90 99 71 32** |
+| walled flights up, falls/step % (25 s, 200 robots) | 0.76 4.4 4.8 4.2 4.4 6.0 (18 s) | 0.28 3.4 2.1 1.3 1.9 3.7 | **0.66 0.42 0.37 0.09 0.59 1.82** |
+| curbs, done % | 93 78 67 59 51 58 | 97 73 50 54 43 38 | **95 86 80 71 59 46** |
+| gaps, done % | 88 71 51 51 51 54 | 88 83 69 55 47 15 | **91 90 85 67 63 41** |
+| hurdles, done % | 58 51 44 28 30 16 | 63 5 59 19 39 15 | **77 50 67 38 54 29** |
+| gaps_wide, done % | 60 44 36 26 17 3 | 63 47 3 0 0 0 | **82 66 37 6 0 0** |
+| cancel, fell % open stairs | 0.7 19 21 10 4 9 | 2.8 12 10 17 5 7 | **2.8 2.2 6.4 2.1 2.2 6.4** |
+| cancel, fell % walled | 11 29 25 17 12 12 | 1.4 2.1 7.0 9.2 8.0 21 | **3.6 1.4 3.5 0.7 6.5 14.5** |
+
+Assist unchanged in quality (leg error 0.7 cm, split 0.5 deg, zero jumps). The level-1 hole is gone, refusals
+dropped on curbs, gaps and hurdles, and walled-flight falls per step are 0.1-0.7% up to level 4 (17 cm) against
+the 0.15% goal; level 5 (19 cm, the margin level) is still at 1.8% with 40% not done in 25 s. Remaining: wide gaps
+from level 3 are refused (possibly beyond the plant), hurdles at level 5 fall 63%, overhang level 5 falls 47%.
+Evaluation noise: the same checkpoint repeated on walled flights moved by up to ~0.4 points per step, so cells
+with ~70 robots need the 200-robot rerun before a claim.
 
 ## 8. Other experiments
 
