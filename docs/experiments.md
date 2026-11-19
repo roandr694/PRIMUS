@@ -443,6 +443,177 @@ camera needs to follow from above there).
 
 **Second seed** (`skill-v12b-seed1`, started 2026-11-18): the v12 + v12b recipe in one run from v11 (13000
 iterations, `--seed 1`, so also a different training terrain), log `experiments/logs/v12b_seed1_train.log`.
+Run `experiments/2026-11-18_09-39-32-skill-v12b-seed1`, evaluated at `model_12999.pt` with the same protocol
+(`experiments/v12b_seed1_eval/`). Hardest level, success / fell / refused %:
+
+| type | v12b (model_12998) | seed 1 (model_12999) |
+|---|---|---|
+| curbs | 46 / 16 / 38 | 63 / 34 / 3 |
+| gaps | 41 / 13 / 45 | 72 / 25 / 3 |
+| hurdles | 29 / 63 / 7 | 18 / 81 / 1 |
+| gaps_wide | 0 / 5 / 95 | 0 / 11 / 89 |
+| overhang | 53 / 47 / 0 | 51 / 49 / 0 |
+| stairs_narrow up, falls/step | 0.83% | 1.05% |
+
+Assist falls/min: flat 0.06 (v12b 0.05), rough 0.09 (0.06), slope 0.32 (0.27), bumps 0.56 (0.54). Cancel falls
+1.4–14.5% per level, same as v12b. Read with the protocol up to v12b, seed 1 almost never refuses but falls about
+twice as often on curbs, gaps and hurdles. **That reading is wrong:** most of those falls happen on the neighbouring
+tiles (next section). With the corrected protocol seed 1 is better than v12b on every obstacle type.
+
+Note: the evaluation must run in the `/home/rodrigo/test/isaac-rl` venv; the `isaacsim-6.1` conda env has no
+`tensordict` (any more).
+
+### What really limits the skills: the 2026-11-18 analysis (`experiments/analysis_2026-11-18/`)
+
+Question: which failures are the policy's, which are the evaluation's and which are the robot's? Five probes.
+
+**1. The evaluation leaked into the neighbouring tiles** (`fall_autopsy.py`). `skill_eval.py` drives every robot
+straight for 18 s at 0.5–1.0 m/s from near its tile centre: 9–18 m on an 8 m tile. Past the edge is another type
+or another level, and a fall there counted against the robot's own cell. For v12b, falls inside the tile / all
+falls, levels 0-5: gaps 2/9 8/18 2/20 6/27 7/24 6/22, overhang 0/3 1/19 4/17 5/35 4/40 55/65, curbs 0/8 9/28 13/23
+16/23 32/43 35/43. A policy that refuses less reaches the neighbours more often, so the old protocol favoured
+refusing. Every skill number for curbs, gaps, overhang, hurdles and gaps_wide up to v12b carries this bias (stairs
+are less affected: climbs finish on top; walled flights cannot be left). Fix: `skill_eval.py --tile-only`, a
+robot's run ends when it leaves its tile (counted as crossed if it did not fall). Corrected results (seed 123, 150
+robots per cell, random motors, done / fell / refused %, levels 0-5; `tileonly_*.txt`):
+
+| type | v12 final | v12b | seed 1 |
+|---|---|---|---|
+| curbs | 100/0/0 81/6/13 54/11/35 65/15/21 44/24/32 41/26/33 | 99/1/0 97/2/1 83/10/7 71/17/12 61/16/23 43/20/37 | 100/0/0 97/3/0 91/9/0 86/14/0 80/20/0 67/29/5 |
+| gaps | 100/0/0 96/1/3 77/4/19 59/3/38 54/2/44 19/0/81 | 99/1/0 93/4/3 92/1/7 75/5/19 78/3/19 53/1/45 | 100/0/0 98/2/0 99/1/0 95/5/0 97/3/0 95/3/2 |
+| overhang | 97/3 99/1 96/4 97/3 89/11 56/44 | 100/0 100/0 97/3 99/1 97/3 56/44 | 99/1 99/1 98/2 97/3 97/3 64/36 |
+| hurdles | 61/17/22 5/16/79 62/11/27 19/12/69 45/23/32 15/65/19 | 77/7/16 51/11/39 83/13/5 43/11/45 63/31/5 32/63/5 | 88/12/0 81/19/0 85/15/0 75/24/1 61/37/3 29/69/2 |
+| gaps_wide | 66/1/33 52/3/45 5/1/93 0/3/97 0/2/98 0/2/98 | 87/3/10 75/4/21 45/5/49 7/5/89 0/6/94 0/5/95 | 97/3/0 97/3/0 87/8/5 49/23/29 1/15/83 0/11/89 |
+| walled flights up, falls/step % | 0.00 1.04 2.16 0.50 1.91 2.66 | 0.64 0.38 0.23 0.11 0.26 1.40 | 1.16 0.62 0.47 0.00 0.26 0.42 |
+
+Open stairs and descents are 87–100% done for all three from v12b on. Assist, tile-only (falls/min flat / rough /
+slope / bumps): LQR alone 0.29 / 0.39 / 0.94 / 1.63, v12b 0.06 / 0.04 / 0.24 / 0.37, seed 1 0.04 / 0.04 / 0.23 /
+0.39. **Seed 1 is the best skill policy**: same assist, gaps nearly solved (95% at 45 cm), curbs and wide gaps
+clearly better, it refuses almost nothing; v12b's refusals were mostly real refusals, its falls mostly elsewhere.
+
+**2. Training had the same leak** (`train_tile_leak.py`, training configuration, seed 1 policy). Episodes last 20 s
+at 0.3–1.6 m/s. Share of time outside the own tile: 46–60% on curbs, gaps, overhang, hurdles and gaps_wide at levels
+0-3, 30–45% on open stairs, 20–30% on the assist tiles; on gaps level 4 a robot fell 0.20 times per 40 s inside its
+tile and 0.72 times outside. Those falls demote the type's curriculum level and, for the policy, crossing a feature
+is followed by 10+ s on random harder terrain at the wrong planner speed. That makes stopping look safe: a likely
+root cause of v12's refusals, of the curriculum plateau at ~2.7, and of how differently two seeds of the same recipe
+settle (v12b refuses, seed 1 does not).
+
+**3. What the robot can jump** (`running_jump.py`: flat ground, LQR + the jump primitive alone, a grid over speed and
+the primitive's shape). Weak motors (18 N.m, 0.8 W0, 500 W): best clearance 23–25 cm, flight at most 0.39 m, top
+speed ~2.3 m/s. Strong motors (25 N.m, 1.05 W0, 900 W): clearance 30–35 cm, flight 0.43 m at 1.6 m/s, 0.57 m at
+2.4 m/s, 0.70 m at 2.8 m/s (with 23–39% falls on landing). This is a lower bound: the policy adds leg force and
+lean, and seed 1 crosses 0.60 m gaps half the time at <= 1 m/s commanded. By motor draw (tile-only,
+`tileonly_*_{weak,strong}.txt`), seed 1, done %: hurdles 19 cm 43 (weak) / 79 (strong), 24 cm 18 / 43; gaps_wide
+0.60 m 20 / 63, 0.70 m 0 / 3, 0.80 m 0 / 0. Evaluating hurdles and wide gaps at their training speeds (0.8–1.6
+m/s) instead of 0.5–1.0 changes little (`tablespeed_*.txt`): the evaluation speed is not the cause.
+
+**4. What the robot can crouch under** (`crouch_height.py`, `overhang_leg.py`). Fully crouched (leg 0.18 m) the
+highest collision point is 0.37 m (the base box); the level-5 bar is at 0.42 m. But the policy's height authority
+is -0.17 m from the commanded leg, and training and evaluation draw the skill leg command in 0.22–0.45 m: above
+~0.38 m the robot cannot get under the bar at all. Seed 1, overhang level 5 by commanded leg: 0.22–0.30 m 89% done,
+0.30–0.38 m 93%, 0.38–0.45 m 13%. The planner does not lower the leg for a bar. Overhangs are solved once the
+command allows the crouch; on the real robot the sensors on top (mounts not confirmed) will raise the 0.37 m.
+
+**5. Realistic targets.** From 3 and 4:
+
+| feature | levels | verdict |
+|---|---|---|
+| stairs 4–19 cm (open, wide, long, walled) | 0-5 | feasible; 19 cm is the margin level |
+| curbs 4–20 cm | 0-5 | feasible (hop clearance >= 23 cm); policy work |
+| gaps 10–45 cm | 0-5 | solved by seed 1 (95–100%) |
+| overhang bar 0.80–0.42 m | 0-5 | solved when the leg command allows the crouch (planner fix) |
+| hurdles 6–19 cm | 0-4 | feasible; 19 cm needs good motors |
+| hurdles 24 cm | 5 | at the weak motors' clearance: beyond the plant, do not chase |
+| gaps_wide 0.30–0.60 m | 0-3 | feasible to 0.50 m; 0.60 m only with strong motors |
+| gaps_wide 0.70–0.80 m | 4-5 | beyond the plant at the planner's speeds: the planner must not offer them, the policy may refuse |
+
+What is left that is the policy's: hurdles at 6–15 cm still fall 12–24% (seed 1; jumps in a chain 0.9 m apart),
+curbs at 13–20 cm fall 14–29%, the walled 19 cm flight, and the stall-or-fall balance at the edge of the plant.
+Autopsy of seed 1 inside the tile (`autopsy_seed1.json`): on 6–9 cm hurdles half the falls come with **no jump** at
+all, the wheel against the wall and the controller protection cutting the torques (leg angle or pitch beyond 60°):
+the policy tries to roll over a wall of 0.55–0.85 wheel radii, the same roll-or-hop band as the stairs level-1 hole.
+From 12 cm on, falls follow a jump (tilt on landing, leg or chassis on the wall); at 19–24 cm, leg, gear and chassis
+touch the wall (clearance). Curb falls come within 0.6 s of a hop (landing).
+
+**Changes for v13** (`skill_env.py`, all on by default; the evaluation keeps the old terrain unless asked):
+`tile_truncate` (leaving the own tile ends the episode as a bootstrapped time-out: no bonus, no penalty, counts as
+crossed for the curriculum; not a success terminal, which would end the positive per-step rewards early and pay
+the policy to stay in the tile), `max_level_by_type` (curriculum capped at gaps_wide level 3 and hurdles level 4),
+`overhang_leg_max` (skill leg command at most 0.36 m on overhang tiles). Check: time outside the own tile 0% on
+every type (`train_tile_leak.py`). `skill_eval.py` gained `--tile-only`, `--speed table|lo,hi` and
+`--overhang-leg-max`.
+
+### v13a result (2026-11-19, `2026-11-18_23-48-33-skill-v13a`, seed 1 + 2000 iterations; `experiments/v13a_eval/`)
+
+Tile-only protocol, seed 123, random motors, 150 robots per cell; done % at levels 3 / 4 / 5 (seed 1 → v13a). The
+leg-cap columns use `--overhang-leg-max 0.36` (what the planner will send near a bar); both runs agree within noise
+on the other types.
+
+| type | seed 1 | v13a | note |
+|---|---|---|---|
+| hurdles | 75 / 61 / 29 | 79 / 80 / 41 | +19 pts at 19 cm; level 5 (24 cm) is not trained any more and still improves |
+| gaps_wide | 49 / 1 / 0 | 69 / 25 / 1 | 0.60 m: +20 pts; 0.70 m: 25 % (untrained level); 0.80 m stays impossible |
+| curbs | 86 / 80 / 67 | 82 / 77 / 69 | unchanged |
+| gaps | 95 / 97 / 95 | 97 / 95 / 92 | unchanged |
+| overhang, leg cap 0.36 | 100 / 99 / 91 | 99 / 100 / 76 | worse at level 5 (42 cm bar) |
+| overhang, no cap | 97 / 97 / 64 | 99 / 97 / 41 | expected: tall commands under a bar are no longer trained |
+| stairs_narrow up, falls/step L1/L2 | 0.6 / 0.5 % | 1.6 / 1.8 % | worse at the low levels (n~70, but seen in both runs) |
+| cancel on stairs, fell % L1/L2 | 3.6 / 2.1 | 9.4 / 10.0 | worse at the low levels |
+
+Assist (falls/min flat / rough / slope / bumps): 0.04 / 0.09 / 0.18 / 0.37, the same as seed 1
+(0.04 / 0.04 / 0.23 / 0.39).
+
+What it means:
+- The fixes do what the analysis predicted for the skills that were capped by the leak: hurdles and wide gaps gain
+  15–25 points with the same motors. Refusals are no higher than seed 1.
+- The overhang level-5 falls are all chassis hits on the bar 1–3 m into the tile, never after a jump
+  (`autopsy_v13a_overhang.json`). Even low commands fail more (0.22–0.30 m: 66 % vs 89 %; `overhang_leg_v13a.txt`).
+  The policy crouches less than seed 1 did: with the command capped at 0.36 m in training, it rarely needs its own
+  height residual, and the 5 cm margin under a 42 cm bar does not forgive that.
+- Narrow and low stairs got worse while the curriculum moved robots up. The level mean rose from 2.44 to 3.14 over
+  the run and had not levelled off (before v13 it was stuck), and the training fall rates on overhang and narrow
+  stairs rose with it. This is a policy in transition, not a converged trade.
+- Decision: continue the same recipe as v13b (`model_14998` + 3000 iterations, log `logs/v13b_train.log`) and judge
+  the trade once the curriculum is flat. If the overhang does not come back, the fix is in the env (train part of
+  the overhang tiles with an uncapped command, or command the leg the planner would really send: the bar height
+  minus the body, which is lower than 0.36 m at level 5), not more iterations.
+
+### v13b result (2026-11-19, `2026-11-19_02-03-03-skill-v13b/logs/model_17997.pt`, v13a + 3000 iterations; `experiments/v13b_eval/`)
+
+The curriculum flattened at a level mean of about 3.20 (2.64 at the resume, +0.001 over the last 250 iterations).
+Same protocol; done % at levels 3 / 4 / 5 with `--overhang-leg-max 0.36` (the runs without the cap agree within
+noise except on the overhang).
+
+| type | seed 1 | v13a | v13b |
+|---|---|---|---|
+| hurdles | 79 / 61 / 25 | 77 / 78 / 42 | 69 / 71 / 41 |
+| gaps_wide | 50 / 1 / 0 | 71 / 29 / 1 | 77 / 20 / 1 |
+| curbs | 89 / 87 / 70 | 87 / 81 / 64 | 86 / 84 / 68 |
+| gaps | 95 / 97 / 95 | 95 / 96 / 93 | 95 / 96 / 94 |
+| overhang (cap 0.36) | 100 / 99 / 91 | 99 / 100 / 76 | 98 / 100 / 88 |
+| stairs_narrow up, falls/step L1 / L2 | 1.0 / 1.0 % | 2.2 / 2.0 % | 1.2 / 1.4 % |
+| cancel, fell % stairs L5 / narrow L5 | 8.5 / 14.5 | 3.5 / 11.7 | 11.3 / 27.6 |
+
+Assist: 0.06 / 0.04 / 0.22 / 0.32 falls/min (flat / rough / slope / bumps), unchanged.
+
+Reading:
+- The v13a regressions were a transition, as suspected: the overhang came back to 88 % (seed 1: 91 %, ±5) and the
+  low narrow stairs to about seed 1. The hurdle and wide-gap gains stayed: +10 pts at 19 cm, +16 at 24 cm, +27 at
+  0.60 m.
+- Refusals are gone everywhere, including where the robot cannot succeed. On wide gaps of 0.70–0.80 m (levels 4–5,
+  no longer trained) v13b falls 80–98 % instead of refusing as seed 1 did (83–89 % refused). This is safe only
+  if the planner never offers a feature beyond `SKILLS[...]["max_level"]`. Today the planner ignores that field, so
+  that rule is now a requirement before v13b goes on the robot.
+- Cancel at the top stairs level got worse (narrow stairs L5 27.6 % vs 14.5 %). The cancel suite has few climbing
+  robots per cell, so the uncertainty is wide, but it is the one number that moved the wrong way.
+- What is left near the plant's limit: hurdles at 24 cm (41 %, about the weak-motor clearance) and curbs at 20 cm
+  (68 %). The autopsy says these are landing and clearance failures, not refusals; more iterations of the same
+  recipe have stopped moving them (v13a → v13b).
+
+**Decision:** v13b replaces seed 1 as the skill policy, conditional on the planner enforcing `max_level`
+(gap_wide ≤ 0.60 m, hurdle ≤ 19 cm) and sending a low leg near a bar. Seed 1 is kept as the fallback for the
+cancel behaviour.
 
 ## 8. Other experiments
 
@@ -481,6 +652,11 @@ Through the full CPU stack the exported v1 descended 13 cm stairs and crossed 17
 10. **Flat training curves can hide progress, and fewer falls can mean more refusals.** v12's curves stalled at
     iteration 2500 while assist kept improving; pricing falls by height made refusing the cheaper option. Always
     read falls together with refusals, on unseen terrain.
+11. **Measure what you think you measure.** Up to v12b the skill evaluation (and training) let robots drive off
+    their tile into the neighbours; the protocol favoured refusing and reversed the v12b / seed 1 ranking. An
+    autopsy of where and how robots fall is cheap and should come before any recipe change.
+12. **Know the plant's envelope before chasing a number.** Wide gaps of 0.7–0.8 m, 24 cm hurdles on weak motors
+    and a bar the commanded leg cannot crouch under are not policy problems; training on them teaches refusal.
 
 ## 10. Reproducing
 

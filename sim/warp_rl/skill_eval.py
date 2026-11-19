@@ -41,7 +41,7 @@ ASSIST = ("flat", "rough", "slope", "bumps")
 
 
 @torch.inference_mode()
-def run(env, policy, seconds, distance):
+def run(env, policy, seconds, distance, tile_only=False):
     import controller as C
     N, dev, O = env.num_envs, env.device, C.O
     idx = torch.arange(N, device=dev)
@@ -51,6 +51,7 @@ def run(env, policy, seconds, distance):
     climb = env.qpos[:, 2] < 0.55                # spawned at the foot (descending robots start on top)
     done = torch.zeros(N, dtype=torch.bool, device=dev)
     fell, arrived, finished = torch.zeros_like(done), torch.zeros_like(done), torch.zeros_like(done)
+    left = torch.zeros_like(done)
     z = lambda: torch.zeros(N, device=dev)
     dist, jumps, phase0, roll, t_live, t_ground, one_wheel = (z() for _ in range(7))
     s = {k: z() for k in ("verr", "yerr", "lerr", "roll_mean", "pitchr", "power", "torque", "split")}
@@ -96,9 +97,15 @@ def run(env, policy, seconds, distance):
         finished |= live & env.finished              # open flight climbed: the flag goes off, it holds on top
         dist = torch.where(new, (prev - start[:, 0:2]).norm(dim=-1), dist)
         done |= dones
+        if tile_only:       # leaving the own tile ends the robot's run (what lies beyond is another type or level)
+            c = env.tile_centers[env.level, env.ttype]
+            out_ = ((env.qpos[:, 0:2] - c).abs() > env.terrain["tile"] / 2 - 0.1).any(-1) & ~done
+            left |= out_
+            dist = torch.where(out_, (env.qpos[:, 0:2] - start[:, 0:2]).norm(dim=-1), dist)
+            done |= out_
     dist = torch.where(~done, (env.qpos[:, 0:2] - start[:, 0:2]).norm(dim=-1), dist)
     narrow = env.flight != 0
-    ok = ~fell & torch.where(narrow, arrived, (dist >= distance) | finished)
+    ok = ~fell & torch.where(narrow, arrived, (dist >= distance) | finished | left)
     steps_alive = (t_live / env.dt).clamp_min(1)
     avg = {k: v / steps_alive for k, v in s.items()}
     return dict(ok=ok, fell=fell, refused=~fell & ~ok, climb=climb, gained=best - g0, jumps=jumps, roll=roll,
@@ -126,11 +133,13 @@ def make_env(args, types, L, suite):
     N = len(use) * L * args.per
     common = dict(num_envs=N, curriculum=False, random_tile_type=False, p_parked_start=0.0,
                   episode_s=args.seconds + 1.0, p_climb=args.p_climb, terrain_variants=not args.v11_terrain,
-                  rise_jitter=0.01, stall_end_s=1e9)    # the v12 evaluation terrain; refusals counted, not ended
+                  rise_jitter=0.01, stall_end_s=1e9, tile_truncate=False, max_level_by_type=(),
+                  overhang_leg_max=getattr(args, "overhang_leg_max", 1.0))    # the v12 evaluation terrain; refusals counted, not ended
     if suite == "assist":
         cfg = SkillCfg(**common, push_speed=args.push, push_interval_s=(2.0, 6.0))
     else:
-        cfg = SkillCfg(**common, push_speed=0.0, push_speed_skill=0.0, eval_speed=(0.5, 1.0), p_flag_late=0.0,
+        speed = None if args.speed == "table" else tuple(float(v) for v in args.speed.split(","))
+        cfg = SkillCfg(**common, push_speed=0.0, push_speed_skill=0.0, eval_speed=speed, p_flag_late=0.0,
                        p_cancel=1.0 if suite == "cancel" else 0.0, cancel_after_s=(1.5, 6.0))
     env = SkillEnv(cfg, device=args.device, seed=args.seed)
     if args.motors != "random":
@@ -151,7 +160,7 @@ def suite_skill(args, policies, env, use, L):
           f"ok/fell/refused %; +- = widest 95% interval of ok; jump starts per robot, steps, roll / split [deg], "
           f"1-wheel [%]")
     for name, pol in policies:
-        r = run(env, pol, args.seconds, args.distance)
+        r = run(env, pol, args.seconds, args.distance, args.tile_only)
         rows = {}
         for t in use:
             tn = all_types[t]
@@ -207,7 +216,7 @@ def suite_assist(args, policies, env, use, L):
     print(f"  {'':10s} {'terrain':7s} falls/min fell% | speed err | yaw err | leg err cm | roll deg | pitch rate | "
           f"power W | torque rms | split deg | jumps")
     for name, pol in policies:
-        r = run(env, pol, args.seconds, args.distance)
+        r = run(env, pol, args.seconds, args.distance, args.tile_only)
         rows = {}
         for t in use:
             s = env.ttype == t
@@ -231,7 +240,7 @@ def suite_cancel(args, policies, env, use, L):
     results = {}
     print("cancel half way (flag off, speed 0 after 1.5-6 s), climbing robots: fell % per level")
     for name, pol in policies:
-        r = run(env, pol, args.seconds, args.distance)
+        r = run(env, pol, args.seconds, args.distance, args.tile_only)
         rows = {}
         for t in use:
             sel0 = (env.ttype == t) & r["climb"]
@@ -252,6 +261,14 @@ def main():
     ap.add_argument("--types", default=None, help="comma-separated terrain types (default: all of the suite)")
     ap.add_argument("--p-climb", type=float, default=0.5, help="share of the stairs robots that climb")
     ap.add_argument("--seconds", type=float, default=18.0)
+    ap.add_argument("--tile-only", action="store_true",
+                    help="a robot's run ends when it leaves its own tile (otherwise it drives on into the neighbours "
+                         "for the whole time and their falls count; the protocol up to v12b)")
+    ap.add_argument("--overhang-leg-max", type=float, default=1.0,
+                    help="cap of the commanded leg on overhang tiles (training from v13: 0.36; 1.0 = no cap)")
+    ap.add_argument("--speed", default="0.5,1.0",
+                    help="skill suites: commanded speed range 'lo,hi' for every feature, or 'table' for each "
+                         "feature's training range (policy_interface.SKILLS train_speed)")
     ap.add_argument("--distance", type=float, default=2.5)
     ap.add_argument("--push", type=float, default=1.0, help="assist suite: push speed per axis [m/s]")
     ap.add_argument("--motors", choices=("random", *MOTORS), default="random", help="motor draw (default: as in training)")

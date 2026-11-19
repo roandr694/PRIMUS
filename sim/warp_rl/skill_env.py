@@ -96,6 +96,15 @@ class SkillCfg(EnvCfg):
     init_max_level: int = 5
     p_random_level: float = 0.2
     level_up_distance: float = 2.5        # [m] from the spawn point at the end of the episode
+    # v13 (2026-11-18 analysis): up to v12b a robot drove on past its tile for the whole 20 s episode, so about half
+    # of every gap/curb/overhang/hurdle episode and most of its falls were on the neighbouring tiles (another type or
+    # level), which drove the type's curriculum and made stopping look safe. Leaving the own tile now truncates the
+    # episode (a time-out, bootstrapped: no bonus, no penalty) and counts as crossing it.
+    tile_truncate: bool = True
+    # levels beyond the plant (experiments.md §7, v13 analysis): the curriculum does not go above these
+    max_level_by_type: tuple = (("gaps_wide", 3), ("hurdles", 4))
+    # overhang tiles: the policy's height authority is -0.17 m, so a taller command cannot crouch under the 0.42 m bar
+    overhang_leg_max: float = 0.36
     # plant and sensor model
     torque_range: tuple = (18.0, 25.0)    # joint torque limit [N.m]
     w0_scale: tuple = (0.8, 1.05)         # x W0 (battery sag under load lowers the no-load speed)
@@ -210,6 +219,12 @@ class SkillEnv(PrimusWarpEnv):
         self.ep_skill_steps, self.ep_jumps_assist, self.ep_split = z(N), z(N), z(N)
         # curriculum: a level per robot and per type
         self.lvl_tab = torch.randint(0, cfg.init_max_level + 1, (N, len(types)), generator=self.gen, device=dev)
+        top = torch.full((len(types),), cfg.terrain_levels - 1, dtype=torch.long, device=dev)
+        for name, lv in cfg.max_level_by_type:
+            if name in types:
+                top[types.index(name)] = min(lv, cfg.terrain_levels - 1)
+        self.type_top = top
+        self.lvl_tab = torch.minimum(self.lvl_tab, top[None])
         self.rand_lv = torch.zeros(N, dtype=torch.bool, device=dev)
         self.drv = None
         self.frame_dim = PI.FRAME_DIM
@@ -287,7 +302,8 @@ class SkillEnv(PrimusWarpEnv):
         if self.cfg.curriculum:
             n, top = len(ids), self.cfg.terrain_levels - 1
             rnd = torch.rand(n, generator=self.gen, device=self.device) < self.cfg.p_random_level
-            lv = torch.where(rnd, torch.randint(0, top + 1, (n,), generator=self.gen, device=self.device),
+            tt = self.type_top[self.ttype[ids]]
+            lv = torch.where(rnd, (torch.rand(n, generator=self.gen, device=self.device) * (tt + 1)).long().clamp(max=tt),
                              self.lvl_tab[ids, self.ttype[ids]])
             self.level[ids], self.rand_lv[ids] = lv, rnd
 
@@ -403,7 +419,10 @@ class SkillEnv(PrimusWarpEnv):
         accel = levels[torch.randint(0, len(levels), (n,), generator=self.gen, device=dev)]
         self.cmd[ids, 0] = torch.where(st, self.cmd[ids, 0], speed)
         self.cmd[ids, 1] = torch.where(st, self.cmd[ids, 1], yaw)
-        self.cmd[ids, 2] = torch.where(st, self._rand(n, *cfg.skill_leg_range), leg)
+        sleg = self._rand(n, *cfg.skill_leg_range)
+        over = tt == self.terrain["types"].index("overhang")
+        sleg = torch.where(over, sleg.clamp(max=cfg.overhang_leg_max), sleg)
+        self.cmd[ids, 2] = torch.where(st, sleg, leg)
         self.cmd[ids, 3] = 0.0                        # roll: not commanded by the remote
         self.cmd[ids, 4] = 0.0
         self.cmd[ids, 5] = accel
@@ -603,6 +622,10 @@ class SkillEnv(PrimusWarpEnv):
         # 0.995), the critic diverged and the hop died (first v12 run, 2026-11-17)
         success = self.arrived | (self.finished & (t - self.t_finish > cfg.hold_after_finish_s))
         timeout = (self.episode_length_buf >= self.max_episode_length) | off_map
+        if cfg.tile_truncate:
+            c = self.tile_centers[self.level, self.ttype]
+            self.left_tile = ((self.qpos[:, 0:2] - c).abs() > self.terrain["tile"] / 2 - 0.1).any(-1) & ~fell
+            timeout = timeout | self.left_tile
         refused = (self.stall_t > cfg.stall_end_s) & ~fell & ~success
         self.fell_now, self.refused_now = fell, refused
         terms["refuse"] = refused.float()
@@ -671,10 +694,12 @@ class SkillEnv(PrimusWarpEnv):
             down = torch.where(assist, terminated[ids], down)
             cancelled = self.cancelled[ids]                      # a cancelled skill says nothing about the level
             lv = self.level[ids] + (up & ~cancelled).long() - (down & ~up).long()
-            top = self.cfg.terrain_levels - 1
-            lv = torch.where(lv > top, torch.randint(0, top + 1, lv.shape, generator=self.gen, device=self.device), lv)
+            top = self.type_top[self.ttype[ids]]
+            rnd_lv = (torch.rand(lv.shape, generator=self.gen, device=self.device) * (top + 1)).long().clamp(max=top)
+            lv = torch.where(lv > top, rnd_lv, lv)
+            lv = torch.minimum(lv.clamp_min(0), top)
             keep = ~self.rand_lv[ids]
-            self.lvl_tab[ids[keep], self.ttype[ids][keep]] = lv.clamp(0, top)[keep]
+            self.lvl_tab[ids[keep], self.ttype[ids][keep]] = lv[keep]
             log["Curriculum/level_mean"] = self.lvl_tab.float().mean()
         for t, name in enumerate(self.terrain["types"]):
             sel = self.ttype[ids] == t

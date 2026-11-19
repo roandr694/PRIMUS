@@ -85,7 +85,8 @@ def to_sides(a, skill, xp=None):
 # --------------------------------------------------------------------------------------------------------------
 # Skills: one table for the planner (perception/planner.py) and the training environment. Speeds are the planner's
 # command during EXECUTE [m/s]; training draws commands in `train_speed`. `max_level` is the largest training level
-# the policy is validated for (the planner should not offer a bigger feature); `approach_deg` is the heading error
+# the policy is validated for (the planner should not offer a bigger feature; gap_wide and hurdle are capped at
+# the plant's limits, experiments.md §7 2026-11-18 analysis); `leg_max` caps the leg command during the feature; `approach_deg` is the heading error
 # the planner aligns to and training spawns within.
 SKILLS = {
     "stairs_up":   dict(speed=0.6, train_speed=(0.3, 1.2), max_level=5),
@@ -93,9 +94,9 @@ SKILLS = {
     "curb_up":     dict(speed=0.8, train_speed=(0.3, 1.2), max_level=5),
     "curb_down":   dict(speed=0.5, train_speed=(0.3, 1.2), max_level=5),
     "gap":         dict(speed=1.0, train_speed=(0.3, 1.2), max_level=5),
-    "gap_wide":    dict(speed=1.2, train_speed=(0.8, 1.6), max_level=5),
-    "hurdle":      dict(speed=1.2, train_speed=(0.8, 1.6), max_level=5),
-    "overhang":    dict(speed=0.4, train_speed=(0.3, 1.2), max_level=5),
+    "gap_wide":    dict(speed=1.2, train_speed=(0.8, 1.6), max_level=3),     # 0.70-0.80 m: beyond the plant
+    "hurdle":      dict(speed=1.2, train_speed=(0.8, 1.6), max_level=4),     # 24 cm: at the weak motors' clearance
+    "overhang":    dict(speed=0.4, train_speed=(0.3, 1.2), max_level=5, leg_max=0.36),  # crouch needs leg cmd <= 0.36
 }
 APPROACH_DEG = 10.0         # training spawns within +-10 deg of the feature axis; the planner aligns to 4 deg
 
