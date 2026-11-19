@@ -427,6 +427,23 @@ from level 3 are refused (possibly beyond the plant), hurdles at level 5 fall 63
 Evaluation noise: the same checkpoint repeated on walled flights moved by up to ~0.4 points per step, so cells
 with ~70 robots need the 200-robot rerun before a claim.
 
+**Why the adaptive lr sits at its floor (2026-11-18, `experiments/analysis_2026-11-18/lr_probe.py`).** Not a bug:
+resumed from v12b at a fixed lr, the KL between the rollout policy and the updated one, per mini-batch, is
+0.008 at lr 1e-5, 0.39 at 1e-4 without the mirror loss and 0.83 with it (target 0.01, the schedule cuts the lr
+above 0.02). The KL of a Gaussian policy scales with 1/std^2: at the learnt action std of ~0.10 a mean shift of
+0.01 per action already reaches the target, so the schedule allows only ~1e-5. The mirror loss doubles the KL per
+step. Consequence: late in training the policy can only move in very small steps (the plateau of v12). Options
+for a next recipe, not yet tested: a floor on the action std (0.15-0.2), a larger `desired_kl` (0.02-0.03), or a
+fixed lr. The second seed keeps the current recipe so that it measures seed variance only.
+
+**CPU videos of v12b** (`videos/v12b/`, exported `model_12998.pt`, true terrain, skill flag on at 1.5 s): open
+stairs 13 and 19 cm up, across the top and down; curbs 13 cm; gaps and hurdles level 2. The side camera of
+`record_skill_video.py` is blocked by the walls of the walled flights, so that video shows nothing useful (the
+camera needs to follow from above there).
+
+**Second seed** (`skill-v12b-seed1`, started 2026-11-18): the v12 + v12b recipe in one run from v11 (13000
+iterations, `--seed 1`, so also a different training terrain), log `experiments/logs/v12b_seed1_train.log`.
+
 ## 8. Other experiments
 
 **Stand up after a fall (`recovery_env.py`).** v1 never parked (target leg length 0.18 m at the action limit, pose
