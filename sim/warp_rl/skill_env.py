@@ -105,6 +105,14 @@ class SkillCfg(EnvCfg):
     max_level_by_type: tuple = (("gaps_wide", 3), ("hurdles", 4))
     # overhang tiles: the policy's height authority is -0.17 m, so a taller command cannot crouch under the 0.42 m bar
     overhang_leg_max: float = 0.36
+    # per-type cancel probability (default p_cancel). v13b falls holding after a cancel on high narrow stairs
+    # (2026-11-19 cancel autopsy); v13c trains more cancels there
+    p_cancel_by_type: tuple = ()
+    # One history shift per policy step. Before 2026-11-19 the base step computed the observation twice whenever a
+    # robot reset (with 4096 robots: every step), so every robot's history was [t-1, t, t] (same state, fresh
+    # noise) instead of [t-2, t-1, t], which is what the robot computes; and a new episode inherited the old
+    # history (the robot starts from zeros). False reproduces the old behaviour (teachers up to v13c).
+    history_fix: bool = True
     # plant and sensor model
     torque_range: tuple = (18.0, 25.0)    # joint torque limit [N.m]
     w0_scale: tuple = (0.8, 1.05)         # x W0 (battery sag under load lowers the no-load speed)
@@ -224,11 +232,17 @@ class SkillEnv(PrimusWarpEnv):
             if name in types:
                 top[types.index(name)] = min(lv, cfg.terrain_levels - 1)
         self.type_top = top
+        pc = torch.full((len(types),), cfg.p_cancel, device=dev)
+        for name, p in cfg.p_cancel_by_type:
+            if name in types:
+                pc[types.index(name)] = p
+        self.type_pcancel = pc
         self.lvl_tab = torch.minimum(self.lvl_tab, top[None])
         self.rand_lv = torch.zeros(N, dtype=torch.bool, device=dev)
         self.drv = None
         self.frame_dim = PI.FRAME_DIM
         self.hist = z(N, cfg.history, self.frame_dim)
+        self._tick, self._hist_tick = 0, -1
         # height scan: 31 forward x 5 lateral points (5 cm forward, 15 cm lateral); ceiling: 15 x 3 (10 cm)
         f = torch.arange(-0.30, 1.2001, 0.05, device=dev)
         l = torch.tensor([-0.30, -0.15, 0.0, 0.15, 0.30], device=dev)
@@ -357,6 +371,8 @@ class SkillEnv(PrimusWarpEnv):
             return
         n, cfg, dev = len(ids), self.cfg, self.device
         super()._reset(ids)                     # -> _draw_types, _spawn, _resample_commands
+        if cfg.history_fix and hasattr(self, "hist"):
+            self.hist[ids] = 0.0                # the robot's policy starts from an empty history
         q = self.qpos[ids, 3:7]
         R = self._quat_R(q)
         self.goal_heading[ids] = torch.atan2(-R[:, 0, 1], R[:, 1, 1])
@@ -375,7 +391,7 @@ class SkillEnv(PrimusWarpEnv):
         self.skill_tile[ids] = st
         late = st & (u() < cfg.p_flag_late)
         self.t_on[ids] = torch.where(late, self._rand(n, *cfg.flag_delay_s), torch.zeros(n, device=dev))
-        cancel = st & (u() < cfg.p_cancel)
+        cancel = st & (u() < self.type_pcancel[self.ttype[ids]])
         self.t_cancel[ids] = torch.where(cancel, self.t_on[ids] + self._rand(n, *cfg.cancel_after_s),
                                          torch.full((n,), 1e9, device=dev))
         self.skill[ids] = (st & ~late).float()
@@ -455,6 +471,7 @@ class SkillEnv(PrimusWarpEnv):
         # the environment clamps the action to +-1: without a cost on the part beyond it a policy output can drift
         # without limit (v9: the jump trigger reached -50 and could never come back)
         self.excess = (actions.abs() - 1.0).clamp_min(0).square().sum(-1).clamp(max=100.0)
+        self._tick += 1
         return super().step(actions)
 
     def _pre_physics(self):
@@ -486,7 +503,11 @@ class SkillEnv(PrimusWarpEnv):
                             self.cmd[:, 5] / PI.ACCEL_NORM, self.ramp, self.skill], -1)
         jump = o[:, C.O["jump_phase"]:C.O["jump_phase"] + 1] * 0.5
         frame = torch.cat([grav, gyro, legs, wheels, dx, oper, cmds, self.actions, jump], -1)
-        self.hist = torch.cat([self.hist[:, 1:], frame[:, None]], 1)
+        if cfg.history_fix and self._hist_tick == self._tick:      # second call in the same step (after resets)
+            self.hist[:, -1] = frame
+        else:
+            self.hist = torch.cat([self.hist[:, 1:], frame[:, None]], 1)
+        self._hist_tick = self._tick
         # privileged
         self.v_body = torch.einsum("nji,nj->ni", R, self.qvel[:, 0:3])
         z = self.qpos[:, 2:3]

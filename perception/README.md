@@ -39,6 +39,16 @@ pilot (sticks, buttons) ──────────────────�
   climb"). A: the robot stops, turns perpendicular to the edge, and crosses at the skill speed holding that heading;
   the skill policy runs only during this (normal driving stays model-based). It ends after the feature (odometry)
   or after 15 s; B cancels at any time.
+- **Skill limits**: what the detector offers stays inside what the policy is trained and able to do
+  (`features.Limits`: stairs 19 cm, curbs 20 cm, gaps 45 cm; `policy_interface.SKILLS[...]["max_level"]`). Wide
+  gaps (0.5-0.6 m, trained) and hurdles (to 19 cm) are not detected as their own kinds yet; 0.7-0.8 m gaps and
+  24 cm hurdles are beyond the plant and must never be offered (the v13 policy no longer refuses them, it falls).
+- **Leg under a bar**: with an overhang within 2.5 m ahead, and while aligning / crossing it, the pilot's leg
+  command is capped at `SKILLS["overhang"]["leg_max"]` (0.36 m). The policy can lower the body only ~0.17 m below
+  its command (42 cm bar: 89-93 % with commands up to 0.38 m, 3-13 % above). Lowering on the approach also fixes
+  the view: from a 0.45 m leg the camera sees the floor behind a 42 cm bar as unseen ground and offered a spurious
+  "drop 6 cm" before the crouch (`autonomy_sim.py --tile overhang --level 5 --start foot --leg 0.45 --press-a`
+  stopped at the edge; with the cap it crouches under the bar, v13b, 2026-11-19).
 
 ```bash
 cd sim

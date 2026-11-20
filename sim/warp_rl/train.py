@@ -90,6 +90,47 @@ def recurrent_student():
             "distribution_cfg": {"class_name": "GaussianDistribution", "init_std": 0.1, "std_type": "scalar"}}
 
 
+def student_distill(env, arch="encoders", iterations=3000):
+    """Distillation config for the camera student (student_env.py, distill.py). The teacher is the v12/v13
+    encoders network (skill_model.SkillTeacherModel). arch:
+      encoders  skill_model.SkillStudentModel: 1-D conv over the 1 s history + map / ceiling encoders (default)
+      mlp       one MLP on the whole observation
+      gru       a GRU (memory), use with a short history (student_history 3)"""
+    cfg = copy.deepcopy(DISTILL_CFG)
+    H, F = env.cfg.student_history, env.frame_dim
+    cfg["teacher"] = {"class_name": "skill_model:SkillTeacherModel", "hidden_dims": [512, 256, 128],
+                      "activation": "elu", "obs_normalization": True,
+                      "layout": [env.cfg.history * F, 8, 155, 45],
+                      "distribution_cfg": {"class_name": "GaussianDistribution", "init_std": 0.3, "std_type": "scalar",
+                                           "std_range": [0.1, 0.5]}}
+    dist = {"class_name": "GaussianDistribution", "init_std": 0.05, "std_type": "scalar"}
+    if arch == "encoders":
+        cfg["student"] = {"class_name": "skill_model:SkillStudentModel", "hidden_dims": [512, 256, 128],
+                          "activation": "elu", "obs_normalization": True, "layout": [H, F, 155, 155, 45],
+                          "distribution_cfg": dist}
+    elif arch == "gru":
+        cfg["student"] = recurrent_student()
+        cfg["student"]["distribution_cfg"] = dist
+    else:
+        cfg["student"]["distribution_cfg"] = dist
+    recurrent = arch == "gru"
+    cfg["algorithm"] = {"class_name": "distill:DAggerDistillation", "num_learning_epochs": 1 if recurrent else 2,
+                        "gradient_length": cfg["num_steps_per_env"] if recurrent else 1, "learning_rate": 5e-4,
+                        "lr_min": 5e-5, "lr_decay_iters": iterations, "max_grad_norm": 1.0, "loss_type": "mse",
+                        "optimizer": "adam", "beta0": 1.0, "beta_iters": 300,
+                        "action_weights": [1.0] * 8 + [3.0] + [1.0] * 3}
+    cfg["save_interval"] = 250
+    return cfg
+
+
+def student_run_setup(checkpoint):
+    """(student arch, env config overrides) of a student run, from its experiment.json"""
+    m = json.loads((Path(checkpoint).resolve().parents[1] / "experiment.json").read_text())
+    a = m.get("args", {})
+    over = {k: m["env_cfg"][k] for k in ("student_history",) if k in m.get("env_cfg", {})}
+    return a.get("student_arch", "mlp"), over
+
+
 def init_from_smaller(runner, path, history, frame_new, a_new):
     """Copies a skill checkpoint trained with fewer actions into the current networks. The observation is
     history x frame (frame = 21 proprioceptive values, the last actions, the jump phase) + the rest; the old
@@ -144,7 +185,9 @@ def main():
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--task", choices=("residual", "skills", "recovery", "student"), default="residual")
     ap.add_argument("--teacher", default=None, help="--task student: the skill teacher checkpoint")
-    ap.add_argument("--recurrent", action="store_true", help="--task student: GRU student (memory)")
+    ap.add_argument("--recurrent", action="store_true", help="--task student: GRU student (= --student-arch gru)")
+    ap.add_argument("--student-arch", choices=("encoders", "mlp", "gru"), default="encoders",
+                    help="--task student: network (train.student_distill)")
     ap.add_argument("--arch", choices=("mlp", "encoders"), default="mlp", help="--task skills: teacher network")
     ap.add_argument("--resume", default=None, help="continue from this checkpoint (weights + optimiser)")
     ap.add_argument("--init-from", default=None,
@@ -155,6 +198,8 @@ def main():
     ap.add_argument("--gamma", type=float, default=0.995, help="skills: discount")
     ap.add_argument("--name", default=None, help="run name (default: warp-residual / skill-teacher)")
     ap.add_argument("--no-eval", action="store_true")
+    ap.add_argument("--env", action="append", default=[], metavar="KEY=VALUE",
+                    help="override an env config field (Python literal), e.g. --env p_cancel=0.2")
     args = ap.parse_args()
 
     import torch
@@ -180,10 +225,18 @@ def main():
     run.mkdir(parents=True)
     (run / "tracked-changes.patch").write_text(git("diff", "HEAD"))
     cfg = EnvCfg(num_envs=args.num_envs)
+    for kv in args.env:
+        import ast
+        k, v = kv.split("=", 1)
+        assert hasattr(cfg, k), f"--env: no field {k}"
+        setattr(cfg, k, ast.literal_eval(v))
+        print(f"env override: {k} = {getattr(cfg, k)!r}")
+    if args.task == "student" and args.recurrent:
+        args.student_arch = "gru"
+    if args.task == "student" and args.student_arch == "gru" and not any(k.startswith("student_history=") for k in args.env):
+        cfg.student_history = 3                     # the GRU is the memory
     ppo = copy.deepcopy(DISTILL_CFG if args.task == "student" else PPO_CFG)
     ppo["seed"] = args.seed
-    if args.task == "student" and args.recurrent:
-        ppo["student"] = recurrent_student()
     if args.task == "skills":                 # more authority: keep exploring (v1 collapsed to std 0.07)
         ppo["actor"]["distribution_cfg"].update(init_std=0.3, std_range=[0.1, 0.5])
         ppo["save_interval"] = 250
@@ -204,6 +257,10 @@ def main():
         (run / "experiment.json").write_text(json.dumps(manifest, indent=2, default=str))
     if args.task == "student":
         from rsl_rl.runners import DistillationRunner
+        ppo = student_distill(env, args.student_arch, args.iterations)
+        ppo["seed"] = args.seed
+        manifest["ppo_cfg"] = ppo
+        (run / "experiment.json").write_text(json.dumps(manifest, indent=2, default=str))
         runner = DistillationRunner(env, copy.deepcopy(ppo), log_dir=str(run / "logs"), device=args.device)
         runner.load(args.teacher)                      # PPO checkpoint -> teacher weights
         manifest["teacher"] = str(Path(args.teacher).resolve())

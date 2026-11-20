@@ -112,6 +112,16 @@ def run(env, policy, seconds, distance, tile_only=False):
                 t_live=t_live, one_wheel=one_wheel / t_ground.clamp_min(1e-3), **avg)
 
 
+def load_student(env, args):
+    """the camera student of a distillation run (train.py --task student)"""
+    from rsl_rl.runners import DistillationRunner
+    from train import student_distill, student_run_setup
+    arch, _ = student_run_setup(args.student)
+    runner = DistillationRunner(env, student_distill(env, arch), log_dir=None, device=args.device)
+    runner.load(args.student)
+    return runner.get_inference_policy(device=args.device)
+
+
 def load_policy(env, args):
     if not (args.checkpoint or args.v11):
         return None
@@ -129,12 +139,20 @@ def load_policy(env, args):
 def make_env(args, types, L, suite):
     import skill_terrain as ST
     from skill_env import SkillCfg, SkillEnv
+    if getattr(args, "student", None):          # the camera student's environment (the teacher runs in it too)
+        from functools import partial
+        from student_env import StudentCfg, StudentEnv
+        from train import student_run_setup
+        _, over = student_run_setup(args.student)
+        SkillCfg = partial(StudentCfg, **over, p_blackout=args.blackout)
+        SkillEnv = StudentEnv
     use = [ST.TYPES.index(t) for t in types]
     N = len(use) * L * args.per
     common = dict(num_envs=N, curriculum=False, random_tile_type=False, p_parked_start=0.0,
                   episode_s=args.seconds + 1.0, p_climb=args.p_climb, terrain_variants=not args.v11_terrain,
                   rise_jitter=0.01, stall_end_s=1e9, tile_truncate=False, max_level_by_type=(),
-                  overhang_leg_max=getattr(args, "overhang_leg_max", 1.0))    # the v12 evaluation terrain; refusals counted, not ended
+                  overhang_leg_max=getattr(args, "overhang_leg_max", 1.0),
+                  history_fix=not getattr(args, "legacy_history", False))    # the v12 evaluation terrain; refusals counted, not ended
     if suite == "assist":
         cfg = SkillCfg(**common, push_speed=args.push, push_interval_s=(2.0, 6.0))
     else:
@@ -269,6 +287,12 @@ def main():
     ap.add_argument("--speed", default="0.5,1.0",
                     help="skill suites: commanded speed range 'lo,hi' for every feature, or 'table' for each "
                          "feature's training range (policy_interface.SKILLS train_speed)")
+    ap.add_argument("--student", default=None,
+                    help="a camera student checkpoint (train.py --task student): evaluated in the student environment "
+                         "(simulated D435i map); with --checkpoint, the teacher runs there too for comparison")
+    ap.add_argument("--blackout", type=float, default=0.0, help="--student: share of assist episodes losing the camera")
+    ap.add_argument("--legacy-history", action="store_true",
+                    help="the history as in training up to v13c ([t-1, t, t]); default: [t-2, t-1, t] as on the robot")
     ap.add_argument("--distance", type=float, default=2.5)
     ap.add_argument("--push", type=float, default=1.0, help="assist suite: push speed per axis [m/s]")
     ap.add_argument("--motors", choices=("random", *MOTORS), default="random", help="motor draw (default: as in training)")
@@ -291,8 +315,10 @@ def main():
         types = args.types.split(",") if args.types else [t for t in ST.TYPES if t not in ASSIST]
     env, use = make_env(args, types, L, args.suite)
     pol = load_policy(env, args)
-    policies = ([("controller", None)] if args.controller or pol is None else []) + \
-        ([("policy", pol)] if pol is not None else [])
+    policies = ([("controller", None)] if args.controller or (pol is None and not args.student) else []) + \
+        ([("teacher" if args.student else "policy", pol)] if pol is not None else [])
+    if args.student:
+        policies.append(("student", load_student(env, args)))
     results = dict(skill=suite_skill, assist=suite_assist, cancel=suite_cancel)[args.suite](args, policies, env, use, L)
     if args.out:
         tag = args.tag or ("" if args.motors == "random" else args.motors)

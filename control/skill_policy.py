@@ -13,7 +13,8 @@ The observation must match sim/warp_rl/skill_env.py (_compute_obs), in this orde
       -0.2..1.2 every 10 cm, lateral -0.2, 0, 0.2
 Student (obs_version 3, sim/warp_rl/student_env.py): 10 frames of the same history, then the height scan from the
 elevation map (unknown cells = the ground under the wheels), its known mask (155) and the ceiling scan; no
-privileged values.
+privileged values. obs_version 5 (2026-11-19): the v12 student, the same layout with `history` (50 = 1 s) v12
+frames, one per call at 50 Hz, oldest first, zeros at the start.
 The action (in [-1, 1]) x residual_scale + residual_offset is RobotCommand.residual (9th value: jump trigger;
 10th-12th: jump extension, push, tuck length).
 
@@ -107,7 +108,7 @@ class SkillPolicy:
         scan = np.clip(base_z - np.where(known, h, fill) - 0.4, -1.0, 1.0)
         c = np.minimum(ceiling_fn(heading_points(self.cscan, xy, heading)), 10.0)
         clear = np.clip(c - base_z, -0.5, 1.0)
-        if self.meta.get("obs_version", 1) == 3:                    # student: map + mask, no privileged values
+        if self.meta.get("obs_version", 1) in (3, 5):               # student: map + mask, no privileged values
             obs = np.concatenate([self.hist.ravel(), scan, known, clear]).astype(np.float32)
         else:
             p = [*priv["v_body"], priv["base_height"], (priv["torque_limit"] - 20.0) / 5.0, priv["friction"],

@@ -140,10 +140,14 @@ Known limit: a few side falls end in a leaning pose (~55°) the policy does not 
 timeouts); press X again or restart. The hand-over waits until the gear servos are really down, so the
 controller resets into PARKED and stands up normally.
 
-**Student:** `student_env.py` simulates the D435i map per robot on the GPU (field of view, range, occlusion by
-ray marching, noise ∝ depth², per-episode height bias and map offset, memory, unknown mask); map vs truth 7.7 mm
-median. `train.py --task student --teacher <ckpt>` distils it (RSL-RL Distillation: the student drives, the
-teacher labels); `export_policy.py --task student` exports it for `control/skill_policy.py` (obs_version 3).
+**Student (v13, 2026-11-19):** `student_env.py` simulates the D435i map per robot on the GPU: field of view,
+range, body pitch, ray-marched occlusion, noise ∝ depth², odometry drift (random walk per metre, scale error, a
+jump per hop), camera latency, depth holes, blackouts on assist tiles, memory, an unknown mask, and a peek at the
+start. `train.py --task student --teacher <v13 ckpt> [--student-arch encoders|mlp|gru]` distils it with DAgger
+(`distill.py`: teacher-driven start, trigger weighted, lr decay). `skill_eval.py --student <ckpt> --checkpoint
+<teacher>` evaluates both in the student env; `export_policy.py --task student` writes obs_version 5 for
+`control/skill_policy.py`. Details: [docs/experiments.md](../../docs/experiments.md) §7, "Camera student".
+(The paragraphs below on students v1/v2 are the pre-v12 pipeline.)
 
 **Teacher v3 (final, 4000 iterations):** stairs up 7 cm 71% (4.3 of 5 steps), 10 cm+ still weak (0.7 steps);
 stairs down 89–97%, gaps to 45 cm 73–100%, bars 79–100%, curbs 25–96%.

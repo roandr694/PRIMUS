@@ -12,8 +12,8 @@ the v12 recipe: [v12_plan.md](v12_plan.md). Controller and roadmap details: [con
 | Perception stack (D435i map, RPLIDAR, planner, edge guard, A/B buttons) | done in simulation and on the CPU stack |
 | Stand-up after a fall | trained (98.4% of episodes), on CPU front/back falls work; some side falls stick |
 | Skill teacher | **v11 = best teacher**: hops flush, walled 12-step flights 92–98% at 13–19 cm; asymmetric stance, never trained always-on |
-| Always-on policy (assist + skills, one network) | **v13b = current best** (`2026-11-19_02-03-03-skill-v13b/logs/model_17997.pt`; seed 1 `2026-11-18_09-39-32-skill-v12b-seed1/logs/model_12999.pt` kept as fallback), by the tile-only evaluation: assist 0.06 falls/min on flat with pushes (LQR 0.29); gaps to 45 cm 94-100%, overhang 88-100% with a leg command of at most 0.36 m, curbs 68-100%, hurdles to 19 cm 69-85% (24 cm: 41%), wide gaps to 0.6 m 77-100%; narrow stairs 0.5-1.4% falls per step. Needs the planner to enforce `max_level` (it no longer refuses 0.7-0.8 m gaps). Remaining limits partly physical (24 cm hurdles, 0.7-0.8 m gaps). See [experiments.md §7](experiments.md) |
-| Camera student | v1 (v3 teacher) and a GRU student (v5) exist; rebuilt after v12 |
+| Always-on policy (assist + skills, one network) | **v13c = current best** (`2026-11-19_12-42-09-skill-v13c/logs/model_19496.pt`, v13b + more stair cancels; second v13 seed from the v12b lineage reproduces the recipe; v13b `2026-11-19_02-03-03-skill-v13b/logs/model_17997.pt`; seed 1 `2026-11-18_09-39-32-skill-v12b-seed1/logs/model_12999.pt` kept as fallback), by the tile-only evaluation: assist 0.06 falls/min on flat with pushes (LQR 0.29); gaps to 45 cm 94-100%, overhang 88-100% with a leg command of at most 0.36 m, curbs 68-100%, hurdles to 19 cm 69-85% (24 cm: 41%), wide gaps to 0.6 m 77-100%; narrow stairs 0.5-1.4% falls per step. It no longer refuses 0.7-0.8 m gaps: the detector must never offer them (it offers gaps ≤ 45 cm only). Remaining limits partly physical (24 cm hurdles, 0.7-0.8 m gaps). See [experiments.md §7](experiments.md) |
+| Camera student | **student-v1** (from v13c, camera map with drift, latency, holes, blackout; `2026-11-19_16-46-41-student-v1/logs/model_2999.pt`, exported): equal to the teacher on riding, stairs, overhang and gaps to 45 cm; behind on hurdles L5 (33 vs 55 %), wide gaps, long/narrow stairs up and narrow-stairs cancel. Runs in the full CPU stack. See [experiments.md §7](experiments.md) |
 | Real robot | drivers, state estimation, actuator characterisation still open |
 
 ## v12 in one paragraph
@@ -33,11 +33,11 @@ nosing, landings and chained flights, per-type curriculum. Decisions taken for t
    hurdles +19 pts at 19 cm and wide gaps +20 pts at 0.60 m, but the 42 cm overhang drops from 91 % to 76 % and low
    narrow stairs and cancel get worse. The curriculum was still rising, so v13b continued it for 3000 iterations.
    v13b (`2026-11-19_02-03-03-skill-v13b/logs/model_17997.pt`) keeps the hurdle and wide-gap gains, recovers the
-   overhang (88 % vs 91 %) and the narrow stairs, and is the new skill policy, **on condition that the planner
-   enforces `max_level`**: v13b no longer refuses wide gaps of 0.70–0.80 m, it falls into them. Cancel at the top
-   stairs level is worse (27.6 % vs 14.5 % on narrow L5, few robots). Then the
-   planner rules (lower the leg for a bar; offer gaps_wide only to 0.60 m and hurdles to 19 cm), and a second seed
-   of v13. Still open: the lr floor of the adaptive schedule (std floor, larger `desired_kl` or fixed lr).
+   overhang (88 % vs 91 %) and the narrow stairs, and is the new skill policy. It no longer refuses wide gaps of
+   0.70–0.80 m (it falls into them); the detector does not offer them (gaps ≤ 45 cm, no hurdle kind), and the
+   planner now caps the leg at 0.36 m near a bar. Cancel at the top
+   stairs level is worse (27.6 % vs 14.5 % on narrow L5, few robots). Running: a second v13 seed from the v12b
+   lineage (`skill-v13-seed2`, 5000 iterations), to tell the recipe from the luck of seed 1. Done 2026-11-19: seed 2 reproduces the v13 gains; v13c (v13b + more stair cancels) fixes the cancel regression and is the new best (experiments.md §7). Still open: the lr floor of the adaptive schedule (std floor, larger `desired_kl` or fixed lr).
 2. **Student distillation** from v12 (camera map): short history vs ~1 s vs GRU, with the perception fixes P3–P6.
 3. **Full-stack CPU tests**: rendered depth → map → planner → student → controller, plus guard, A/B and X.
 4. **Real robot:** actuator characterisation (replace the estimates in `hardware/actuators.json`), weigh the robot,

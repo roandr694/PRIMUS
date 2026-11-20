@@ -6,6 +6,9 @@
     ALIGN    after pressing the skill button (A) with a feature offered: stop and turn perpendicular to its edge.
     EXECUTE  drive across at the skill speed holding that heading; the skill policy does the rest. Ends after
              the feature (odometry) or on timeout; the cancel button (B) brakes and returns to PILOT anytime.
+             While aligning and executing, the leg command is capped at the skill's `leg_max` (overhang: 0.36 m,
+             the policy can lower the body only ~0.17 m below its command; experiments.md §7), and already in
+             PILOT when an overhang is within `offer_range` ahead.
 The guard toggle (Back on the gamepad, or holding B for 1 s) disables/enables the edge guard.
 Looking: the camera is level and low, so the planner pitches the body to look — down (look_down) when stopped or
 slow at a drop / unseen ground / stairs down / gap, and while aligning for such a skill (at least `peek_s` before
@@ -23,6 +26,7 @@ import policy_interface as PI  # noqa: E402
 
 # skill speeds: one table with the training environment (control/policy_interface.py)
 SKILL_SPEED = {k: v["speed"] for k, v in PI.SKILLS.items()}
+SKILL_LEG_MAX = {k: v["leg_max"] for k, v in PI.SKILLS.items() if "leg_max" in v}
 
 
 def wrap(a):
@@ -40,6 +44,7 @@ class PlannerOutput:
     offer: object = None            # Feature offered to the pilot
     brake: bool = False             # hard brake (speed target snaps to zero)
     pitch_ref: float = 0.0          # body pitch to hold [rad] (+ = nose up): looking with the camera
+    leg_max: float = math.inf       # cap on the pilot's leg command [m] (a skill that needs a low body)
 
 
 class SkillPlanner:
@@ -80,6 +85,13 @@ class SkillPlanner:
         obstacle: (distance ahead, distance behind) from the lidar. -> PlannerOutput"""
         self.speed = speed
         out = self._step(dt, speed_cmd, yaw_cmd, buttons, ahead, behind, heading, x, yaw_rate, obstacle)
+        if out.state in ("ALIGN", "EXECUTE") and self.target is not None:
+            out.leg_max = SKILL_LEG_MAX.get(self.target.kind, math.inf)
+        elif out.state == "PILOT" and speed_cmd >= 0 and \
+                any(f.kind == "overhang" and f.s <= self.offer_range for f in ahead):
+            # crouch on the approach: a tall camera sees the floor behind a bar as unseen ground (a spurious cliff
+            # or drop in front of the overhang, offered before the crouch); at the crouch height it does not
+            out.leg_max = SKILL_LEG_MAX.get("overhang", math.inf)
         # where to look (rate limited), from the state and what is ahead
         want = 0.0
         near = next((f for f in ahead if f.guard and f.s < 1.5), None)

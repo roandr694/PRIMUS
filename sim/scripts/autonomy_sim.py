@@ -61,8 +61,10 @@ def main():
         if out is not None and k % 20 == 0:                                   # planner + policy 50 Hz
             operating = out["mode"] == "operating"
             speed = args.speed if operating and t > 1.0 else 0.0
-            press = args.press_a and operating and not pressed and any(f.feasible for f in auto.ahead[:1])
-            pressed |= press
+            # press A whenever a skill is offered (a rising edge: alternate pressed / released)
+            press = args.press_a and operating and not pressed and res is not None and res.state == "PILOT" \
+                and res.offer is not None
+            pressed = press
             pilot = RobotCommand(speed_cmd=speed, leg_length=args.leg)
             cmd, res = auto.step(0.02, pilot, {"skill": press}, out,
                                  lambda: world.policy_inputs(ctl, out, auto, args.scan))

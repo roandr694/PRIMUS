@@ -603,17 +603,129 @@ Reading:
   0.60 m.
 - Refusals are gone everywhere, including where the robot cannot succeed. On wide gaps of 0.70–0.80 m (levels 4–5,
   no longer trained) v13b falls 80–98 % instead of refusing as seed 1 did (83–89 % refused). This is safe only
-  if the planner never offers a feature beyond `SKILLS[...]["max_level"]`. Today the planner ignores that field, so
-  that rule is now a requirement before v13b goes on the robot.
+  if the planner never offers a feature beyond `SKILLS[...]["max_level"]`. Checked 2026-11-19: it does not. The
+  detector offers gaps only to 45 cm (`features.Limits`) and has no hurdle kind, so wide gaps and hurdles are not
+  offered at all yet. Whoever adds them must keep to 0.60 m and 19 cm (perception/README.md).
 - Cancel at the top stairs level got worse (narrow stairs L5 27.6 % vs 14.5 %). The cancel suite has few climbing
   robots per cell, so the uncertainty is wide, but it is the one number that moved the wrong way.
 - What is left near the plant's limit: hurdles at 24 cm (41 %, about the weak-motor clearance) and curbs at 20 cm
   (68 %). The autopsy says these are landing and clearance failures, not refusals; more iterations of the same
   recipe have stopped moving them (v13a → v13b).
 
-**Decision:** v13b replaces seed 1 as the skill policy, conditional on the planner enforcing `max_level`
-(gap_wide ≤ 0.60 m, hurdle ≤ 19 cm) and sending a low leg near a bar. Seed 1 is kept as the fallback for the
-cancel behaviour.
+**Decision:** v13b replaces seed 1 as the skill policy (exported to `2026-11-19_02-03-03-skill-v13b/exported`).
+Seed 1 is kept as the fallback for the cancel behaviour. The planner now caps the leg at 0.36 m near and under a bar
+(`perception/planner.py`). In the CPU full stack (rendered depth → map → planner → v13b), a pilot leg of 0.45 m at
+the 42 cm bar used to stop at a spurious "drop 6 cm" (the tall camera sees the floor behind the bar as unseen
+ground). With the cap the robot is offered the crouch and passes (perception/README.md).
+
+**Cancel on high stairs (2026-11-19, `experiments/analysis_2026-11-19/cancel_autopsy.py`).** Same setup as the
+cancel suite: 150 climbing robots per level, cancel 1.5–6 s after the start.
+
+| narrow stairs, falls of 150 | L3 | L4 | L5 |
+|---|---|---|---|
+| seed 1: before / after the cancel | 0 / 3 | 5 / 12 | 5 / 14 |
+| v13b: before / after the cancel | 1 / 3 | 2 / 10 | 6 / 33 |
+
+v13b's extra falls are all after the cancel, while it holds on the steps: median 2.5 s after the cancel (seed 1:
+6.7 s). They are not during a jump, and almost none come within 1 s. At the cancel it is about 0.6 m up (3 steps of
+19 cm), at 0.3 m/s. The normal stairs and the lower levels are the same for both policies.
+
+The likely cause is how often training cancels. A cancel comes in 12 % of skill episodes at 1.5–9 s. Since
+`tile_truncate`, a robot that has crossed leaves the tile and the episode ends. Cancels after the crossing never
+happen, and the ones that do are spread over all skill types. So holding still high on narrow treads is rare in
+training.
+
+v13c tests this: v13b + 1500 iterations with `p_cancel_by_type` 0.35 on the four stair types (new `SkillCfg`
+field; `train.py --env KEY=VALUE` overrides any env field). It is queued after the second seed
+(`analysis_2026-11-19/queue_v13c.sh`, which also evaluates both).
+
+### Second v13 seed and v13c (2026-11-19; `experiments/v13-seed2_eval/`, `v13c_eval/`)
+
+Seed 2: the v13 recipe from the v12b lineage (v12b `model_12998`, `--seed 2`, 5000 iterations,
+`*-skill-v13-seed2/logs/model_17997.pt`). v13c: v13b + 1500 iterations with `p_cancel_by_type` 0.35 on the stair
+types (`2026-11-19_12-42-09-skill-v13c/logs/model_19496.pt`). Tile-only protocol, leg cap 0.36; done % at L3 / L4 / L5.
+
+| | v13b | seed 2 | v13c |
+|---|---|---|---|
+| hurdles | 69 / 71 / 41 | 83 / 77 / 46 | 73 / 78 / 54 |
+| gaps_wide | 77 / 20 / 1 | 78 / 33 / 0 | 81 / 29 / 0 |
+| curbs | 86 / 84 / 68 | 81 / 78 / 75 | 81 / 83 / 80 |
+| overhang | 98 / 100 / 88 | 100 / 100 / 99 | 99 / 99 / 86 |
+| cancel, fell % narrow L5 | 27.6 | 17.9 | 17.9 |
+| assist bumps, falls/min | 0.32 | 0.51 | 0.40 |
+
+- The recipe reproduces. Started from the other lineage (v12b, which refused a lot), seed 2 reaches the same
+  curriculum plateau (level mean about 3.20) and the same skill numbers or better, with no refusals. The v13 gains
+  come from the env fixes, not from the luck of seed 1.
+- More stair cancels work, partly. v13c cuts the falls after a cancel on narrow L5 from 33 to 22 of 150
+  (`cancel_autopsy_v13c.txt`), back near seed 1. Curbs and hurdles at L5 improve too (80 % / 54 %), probably just
+  from the extra iterations. Low-stair cancel is noisier (normal stairs L2 12.9 %).
+- Seed 2 solves the 42 cm bar (99 %), but falls more in assist on bumps (0.51 falls/min).
+- Choice: v13c is the deployable skill policy (best curbs and hurdles, cancel fixed, assist unchanged); seed 2 is
+  the second teacher, for distillation or ensembling. Both are inside the plant's envelope. 24 cm hurdles about
+  50 %, 0.7 m gaps 30 %, and 0.8 m gaps impossible match the analysis.
+
+### History bug found while building the student (2026-11-19, `analysis_2026-11-19/history_fix/`)
+
+The base env computes the observation twice in any step where a robot resets (`env.step`: once before the
+resets, once after). `skill_env._compute_obs` shifted the history both times. With 4096 robots some robot resets
+in almost every step, so every robot's 3-frame history was [t-1, t, t]: the same state twice, with fresh noise. It
+was checked with the noise off: in reset steps the last two frames are identical in 52 % of the robots, and the
+rest differ only in the yaw-rate command. A new episode also inherited the old episode's history.
+
+The robot's `skill_policy.py` builds [t-2, t-1, t], starting from zeros. So every teacher since the history
+existed ran on the robot with an observation it never trained on. Fixed: `SkillCfg.history_fix` (default on)
+shifts once per policy step, and a reset clears the history; `skill_eval.py --legacy-history` reproduces the old
+behaviour.
+
+v13c measured both ways (tile-only, leg cap 0.36; done %):
+
+| | legacy [t-1, t, t] | robot [t-2, t-1, t] |
+|---|---|---|
+| hurdles L0–L5 | 84 81 87 69 78 50 | 72 65 80 36 76 55 |
+| curbs L2–L5 | 87 87 85 70 | 84 79 74 70 |
+| stairs_long up L0–L2 | 93 89 85 | 81 79 72 |
+| stairs_narrow up L5, refused | 26 % | 52 % |
+| assist falls/min (flat / rough / slope / bumps) | 0.05 / 0.04 / 0.22 / 0.40 | 0.05 / 0.10 / 0.27 / 0.40 |
+
+The v13 numbers in this section are therefore optimistic for the robot, by up to 30 points on hurdles at L3.
+Consequences:
+- The camera student is trained with the robot's history, and the teacher labels it with the history it was
+  trained with (`StudentCfg.teacher_legacy_history`), so the labels stay in distribution.
+- The next teacher trains with the fix (the default now).
+
+### Camera student v13 (2026-11-19): design
+
+The student is what runs on the robot: the same 12 actions, from what the robot has. The old student pipeline
+(`student_env.py`, before v12) was rebuilt for the v12/v13 interface, and the perception items P3, P5 and P6
+(`v12_plan.md`) were added.
+
+- **Map** (`student_env.py`, per robot on the GPU): a 72 x 72 window of 4 cm cells in the robot's odometry frame,
+  updated at about 17 Hz from the D435i frustum (87 x 58°, 0.28–3 m, CAD mount, body pitch included), with
+  ray-marched occlusion, noise ∝ depth², and memory.
+  - Odometry drift (P3): a random walk per √m in x/y (3 cm), yaw (0.015 rad) and height (1 cm), a ±3 %
+    per-episode scale error, and a jump at every hop landing (3 cm, 0.02 rad, 1 cm). Each cell is written where
+    the robot believed it was and read where it believes it is now, so old cells shift by the drift since they
+    were seen.
+  - Latency and holes (P5): 1–3 policy steps of camera delay, and 0–25 % of the visible cells dropped per frame.
+  - Blackout (P6): 15 % of assist episodes lose the camera for 1–8 s, and the map is cleared.
+  - Peek: at reset the camera takes frames looking level and down, as the planner's ALIGN does.
+  - Check (`student_map_check.py`, teacher driving): known share of the scan 76–89 % on skill tiles and about
+    43 % in assist; map vs truth on known points 0.4 cm (flat) to 3.9 cm (narrow stairwells, drift at the edges).
+- **Network** (`skill_model.SkillStudentModel`): the last 3 frames raw, a 1-D convolution over 50 frames (1 s) in
+  place of the privileged values, a map encoder (scan + known mask, 310 → 256 → 64), a ceiling encoder, then
+  512-256-128. `--student-arch mlp|gru` are the comparisons.
+- **Distillation** (`distill.py`, DAgger on RSL-RL's Distillation):
+  - Early on, the teacher drives a share beta of the episodes, going from 1 to 0 over 300 iterations. The student
+    then sees the middle of the skills before it can reach them itself.
+  - The jump-trigger error weighs 3x.
+  - The learning rate decays 5e-4 → 5e-5; 2 epochs per rollout; one step per time slice.
+  - Logged: per-action error and how often student and teacher disagree on the trigger.
+- **Evaluation:** `skill_eval.py --student <ckpt> --checkpoint <teacher>` runs both in the student environment
+  (camera blackout off by default). `export_policy.py --task student` writes obs_version 5 for
+  `control/skill_policy.py`. The CPU full stack runs it with `autonomy_sim.py --scan map`.
+- **Run:** `2026-11-19_16-46-41-student-v1`, teacher v13c, 3000 iterations, about 5 s/iteration (the camera
+  costs about 30 % of the step).
 
 ## 8. Other experiments
 
@@ -676,3 +788,52 @@ MUJOCO_GL=egl python3 sim/scripts/record_skill_video.py out.mp4 --policy <run>/e
 Experiment directories (checkpoints, logs, `experiment.json` with arguments and git revision, TensorBoard) live
 outside this repository in `experiments/`. The analysis scripts of section 3 were temporary and are described, not
 shipped.
+
+### Student v1 results (2026-11-19)
+
+Run `2026-11-19_16-46-41-student-v1`, 3000 DAgger iterations from teacher v13c, final checkpoint
+`logs/model_2999.pt`, exported to `exported/` (obs_version 5, obs_dim 2255). The first automatic evaluation used
+`model_750` by mistake (lexical sort in `queue_student_eval.sh`, fixed); those numbers are kept in
+`experiments/student_v1_eval/model750/`. Evaluation: same student env (camera map, drift, latency, holes) for both
+policies, the teacher with its privileged inputs, tile-only, overhang leg cap 0.36 m, seed 123.
+
+Done % per level L0..L5, teacher -> student:
+
+| type | teacher | student |
+|---|---|---|
+| stairs up | 89/91/65/83/90/83 | 90/65/70/91/93/77 |
+| stairs down | 83/82/78/78/84/84 | 88/84/84/84/81/89 |
+| curbs | 99/99/87/89/79/71 | 100/94/84/78/75/63 |
+| gaps (to 45 cm) | 100/95/97/98/98/96 | 100/93/92/95/92/83 |
+| overhang | 100/100/99/95/100/85 | 99/100/99/100/99/88 |
+| stairs_wide up | 81/75/87/99/94/81 | 80/87/82/95/91/89 |
+| hurdles | 83/78/87/60/81/55 | 78/83/71/78/63/33 |
+| gaps_wide | 96/93/95/77/29/0 | 95/92/81/54/5/0 |
+| stairs_long up | 79/67/75/73/70/70 | 78/70/55/60/56/59 |
+| stairs_narrow up | 63/57/59/63/57/42 | 52/53/44/59/56/39 |
+| stairs_narrow down | 61/66/60/67/67/56 | 75/70/73/48/51/67 |
+
+Narrow stairs up, falls per step: teacher 1.00/0.98/1.18/0.46/0.15/0.54 %, student 1.43/1.97/1.55/0.36/0.78/1.50 %.
+Assist (falls/min, flat/rough/slope/bumps): teacher 0.06/0.10/0.19/0.34, student 0.04/0.07/0.21/0.47. Assist with
+the camera blacked out for the whole episode: student 0.06/0.06/-/0.46, the same as with the map, so riding does not
+depend on the camera. Cancel half way, fell %: stairs teacher 2-15, student 2-19; narrow stairs teacher 4-18,
+student 7-23.
+
+Reading: the student matches the teacher on riding, stairs (normal, wide, down), overhang and gaps to 45 cm (except
+L5, 83 vs 96). The gap is in the timed or high skills: hurdles L5 33 vs 55, wide gaps L2-L3 (81/54 vs 95/77),
+long and narrow stairs up (5-20 points, about twice the falls per step), curbs L5 63 vs 71, and cancel on narrow
+stairs. These are the cases where the camera sees the obstacle late (level camera, near edges) or where the timing
+of the jump against the edge decides, so part of the gap is the information limit of the camera, not only the
+distillation. The 750-iteration checkpoint was close on riding already and clearly worse on gaps, hurdles and
+narrow stairs; the remaining 2250 iterations gained mostly on gaps (L1-L5 +5 to +11 points) and narrow stairs
+down.
+
+Full-stack CPU (rendered D435i depth -> map -> planner -> exported student -> controller, `autonomy_sim.py --scan
+map --policy-mode always --press-a`): stairs L2 and L4 climbed (final axle z 0.41 m, planner "skill done"), gaps L3
+crossed, overhang L4 crouched under, stairs down L3 from the top descended 65 cm, curbs L3 passed with several
+offers taken. The script has no fall detector; these were judged from the final axle position and the planner
+trace. Outputs in `experiments/student_v1_eval/fullstack/`.
+
+Next for the student: a teacher trained with `history_fix` (the current teacher labels with the duplicated
+history), then student v2 from it; an mlp/gru comparison; more DAgger time on hurdles, wide gaps and narrow stairs
+(per-type sampling weights).

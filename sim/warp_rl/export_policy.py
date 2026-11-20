@@ -34,7 +34,12 @@ def main():
         from student_env import StudentCfg as Cfg, StudentEnv as Env
     else:
         from env import EnvCfg as Cfg, PrimusWarpEnv as Env
-    cfg = Cfg(num_envs=16)
+    over, arch = {}, None
+    if args.task == "student":
+        from train import student_run_setup
+        arch, over = student_run_setup(args.checkpoint)
+        args.recurrent = arch == "gru"
+    cfg = Cfg(num_envs=16, **over)
     env = Env(cfg, device=args.device)
     ppo = copy.deepcopy(DISTILL_CFG if args.task == "student" else PPO_CFG)
     if args.recurrent:
@@ -45,6 +50,9 @@ def main():
         ppo["actor"]["distribution_cfg"].update(init_std=0.5, std_range=[0.1, 0.8])
     if args.task == "skills":
         ppo = skill_ppo(env, args.arch, ppo, symmetry=False)
+    if args.task == "student":
+        from train import student_distill
+        ppo = student_distill(env, arch)
     runner = (DistillationRunner if args.task == "student" else OnPolicyRunner)(env, ppo, log_dir=None, device=args.device)
     runner.load(args.checkpoint)
     out = Path(args.checkpoint).resolve().parents[1] / "exported"
@@ -53,8 +61,9 @@ def main():
     runner.export_policy_to_onnx(str(out), "policy.onnx")
     student = args.task == "student"
     meta = dict(task=args.task, checkpoint=str(Path(args.checkpoint).resolve()),
-                obs_version=3 if student else 4 if args.task == "skills" else 2,
-                action_basis="pairs (control/policy_interface.py)" if args.task == "skills" else "per side",
+                obs_version=5 if student else 4 if args.task == "skills" else 2,
+                action_basis="pairs (control/policy_interface.py)" if args.task in ("skills", "student") else "per side",
+                student_arch=arch,
                 obs_dim=int(env.obs["student" if student else "policy"].shape[1]), num_actions=env.num_actions,
                 residual_scale=list(getattr(cfg, "residual_scale", ())),
                 residual_offset=list(getattr(cfg, "residual_offset", None) or ()),
