@@ -127,7 +127,7 @@ def student_run_setup(checkpoint):
     """(student arch, env config overrides) of a student run, from its experiment.json"""
     m = json.loads((Path(checkpoint).resolve().parents[1] / "experiment.json").read_text())
     a = m.get("args", {})
-    over = {k: m["env_cfg"][k] for k in ("student_history",) if k in m.get("env_cfg", {})}
+    over = {k: m["env_cfg"][k] for k in ("student_history", "teacher_legacy_history") if k in m.get("env_cfg", {})}
     return a.get("student_arch", "mlp"), over
 
 

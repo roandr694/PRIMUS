@@ -1,6 +1,6 @@
 # PRIMUS: status and plan
 
-*Updated 2026-11-18. History and reasoning behind each step: [experiments.md](experiments.md). Latest audit and
+*Updated 2026-11-20. History and reasoning behind each step: [experiments.md](experiments.md). Latest audit and
 the v12 recipe: [v12_plan.md](v12_plan.md). Controller and roadmap details: [control_roadmap.md](control_roadmap.md).*
 
 ## Where we are
@@ -13,7 +13,7 @@ the v12 recipe: [v12_plan.md](v12_plan.md). Controller and roadmap details: [con
 | Stand-up after a fall | trained (98.4% of episodes), on CPU front/back falls work; some side falls stick |
 | Skill teacher | **v11 = best teacher**: hops flush, walled 12-step flights 92–98% at 13–19 cm; asymmetric stance, never trained always-on |
 | Always-on policy (assist + skills, one network) | **v13c = current best** (`2026-11-19_12-42-09-skill-v13c/logs/model_19496.pt`, v13b + more stair cancels; second v13 seed from the v12b lineage reproduces the recipe; v13b `2026-11-19_02-03-03-skill-v13b/logs/model_17997.pt`; seed 1 `2026-11-18_09-39-32-skill-v12b-seed1/logs/model_12999.pt` kept as fallback), by the tile-only evaluation: assist 0.06 falls/min on flat with pushes (LQR 0.29); gaps to 45 cm 94-100%, overhang 88-100% with a leg command of at most 0.36 m, curbs 68-100%, hurdles to 19 cm 69-85% (24 cm: 41%), wide gaps to 0.6 m 77-100%; narrow stairs 0.5-1.4% falls per step. It no longer refuses 0.7-0.8 m gaps: the detector must never offer them (it offers gaps ≤ 45 cm only). Remaining limits partly physical (24 cm hurdles, 0.7-0.8 m gaps). See [experiments.md §7](experiments.md) |
-| Camera student | **student-v1** (from v13c, camera map with drift, latency, holes, blackout; `2026-11-19_16-46-41-student-v1/logs/model_2999.pt`, exported): equal to the teacher on riding, stairs, overhang and gaps to 45 cm; behind on hurdles L5 (33 vs 55 %), wide gaps, long/narrow stairs up and narrow-stairs cancel. Runs in the full CPU stack. See [experiments.md §7](experiments.md) |
+| Camera student | **student-v1** = default (from v13c; `2026-11-19_16-46-41-student-v1/logs/model_2999.pt`, exported): within a few points of its teacher on riding, stairs, overhang and gaps to 45 cm; behind on hurdles L5, wide gaps, narrow/long stairs up. student-v2 (from v13d, robot-order history) is a tie: better curbs/gaps/overhang/wide gaps, worse narrow stairs and cancel. The 1 s conv history beats a GRU student. Both run in the full CPU stack. See [experiments.md §7](experiments.md) |
 | Real robot | drivers, state estimation, actuator characterisation still open |
 
 ## v12 in one paragraph
@@ -27,23 +27,34 @@ nosing, landings and chained flights, per-type curriculum. Decisions taken for t
 
 ## Next, in order
 
-1. **v13** (from the 2026-11-18 analysis, [experiments.md §7](experiments.md)): evaluation and training no longer
-   leak into neighbouring tiles; with the corrected protocol seed 1 is the best skill policy. v13a (seed 1
-   continued with tile truncation, capped levels for wide gaps and hurdles, overhang leg cap; evaluated 2026-11-19):
-   hurdles +19 pts at 19 cm and wide gaps +20 pts at 0.60 m, but the 42 cm overhang drops from 91 % to 76 % and low
-   narrow stairs and cancel get worse. The curriculum was still rising, so v13b continued it for 3000 iterations.
-   v13b (`2026-11-19_02-03-03-skill-v13b/logs/model_17997.pt`) keeps the hurdle and wide-gap gains, recovers the
-   overhang (88 % vs 91 %) and the narrow stairs, and is the new skill policy. It no longer refuses wide gaps of
-   0.70–0.80 m (it falls into them); the detector does not offer them (gaps ≤ 45 cm, no hurdle kind), and the
-   planner now caps the leg at 0.36 m near a bar. Cancel at the top
-   stairs level is worse (27.6 % vs 14.5 % on narrow L5, few robots). Running: a second v13 seed from the v12b
-   lineage (`skill-v13-seed2`, 5000 iterations), to tell the recipe from the luck of seed 1. Done 2026-11-19: seed 2 reproduces the v13 gains; v13c (v13b + more stair cancels) fixes the cancel regression and is the new best (experiments.md §7). Still open: the lr floor of the adaptive schedule (std floor, larger `desired_kl` or fixed lr).
-2. **Student distillation** from v12 (camera map): short history vs ~1 s vs GRU, with the perception fixes P3–P6.
-3. **Full-stack CPU tests**: rendered depth → map → planner → student → controller, plus guard, A/B and X.
-4. **Real robot:** actuator characterisation (replace the estimates in `hardware/actuators.json`), weigh the robot,
+*RL policy work paused on 2026-11-20 by the owner's decision; the project moves to other areas. The policies below
+are the ones to use until it resumes.*
+
+**Policies to use now:** skill/always-on teacher v13c (`2026-11-19_12-42-09-skill-v13c/logs/model_19496.pt`,
+trained with the duplicated history); camera student **student-v1** (`2026-11-19_16-46-41-student-v1/exported`,
+obs_version 5) for the full stack and the robot. Kept as alternatives: v13d (robot-order history) and student-v2.
+
+1. **Real robot:** actuator characterisation (replace the estimates in `hardware/actuators.json`), weigh the robot,
    tyre radius, IMU behaviour during hops, real loop rate (S1–S5 of the plan); ONNX → TensorRT on the Jetson,
    moteus drivers and state estimation in `robot/`, reduced authority at first.
-5. **Later:** banking in fast turns, front flip (needs measured actuators first).
+2. **Full-stack CPU tests** with student-v1: guard, A/B and X, the house environment (`sim/house`), longer runs
+   with a fall detector in `autonomy_sim.py` (it has none; results are judged from the final pose and the planner
+   trace).
+3. **Later:** banking in fast turns, front flip (needs measured actuators first).
+
+### When RL work resumes (notes from 2026-11-20)
+
+- The student follows its teacher within a few points: gains must come from the teacher. Start from v13d (trained
+  with the robot-order history; v13c is not), continue it with more weight on hurdles and narrow stairs, and keep
+  v13d's gains (curbs, gaps, overhang, long stairs). Then distill student-v3 with `teacher_legacy_history=False`.
+- Retrain with the measured actuators as soon as they exist (all numbers are on estimated motors).
+- Keep the 1 s conv history for the student; the GRU student lost everywhere (experiments.md §7).
+- Evaluation rules learnt the hard way: tile-only, leg cap 0.36, 150+ robots per cell, robot-order history; pick
+  checkpoints by iteration number, never by a lexical sort; `skill_eval` must clear `p_cancel_by_type`.
+- Still open: the lr floor of the adaptive schedule (std floor, larger `desired_kl` or fixed lr); hurdles above
+  ~19 cm and gaps above 0.6 m are near the plant limit, do not chase them.
+- Queue scripts and raw outputs: `experiments/analysis_2026-11-19/`, `analysis_2026-11-20/`, `student_v1_eval/`,
+  `student_v2_eval/`, `student_gru_eval/`, `v13d_eval/`.
 
 ## Decisions that shape the plan
 

@@ -150,7 +150,7 @@ def make_env(args, types, L, suite):
     N = len(use) * L * args.per
     common = dict(num_envs=N, curriculum=False, random_tile_type=False, p_parked_start=0.0,
                   episode_s=args.seconds + 1.0, p_climb=args.p_climb, terrain_variants=not args.v11_terrain,
-                  rise_jitter=0.01, stall_end_s=1e9, tile_truncate=False, max_level_by_type=(),
+                  rise_jitter=0.01, stall_end_s=1e9, tile_truncate=False, max_level_by_type=(), p_cancel_by_type=(),
                   overhang_leg_max=getattr(args, "overhang_leg_max", 1.0),
                   history_fix=not getattr(args, "legacy_history", False))    # the v12 evaluation terrain; refusals counted, not ended
     if suite == "assist":

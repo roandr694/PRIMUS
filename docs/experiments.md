@@ -837,3 +837,55 @@ trace. Outputs in `experiments/student_v1_eval/fullstack/`.
 Next for the student: a teacher trained with `history_fix` (the current teacher labels with the duplicated
 history), then student v2 from it; an mlp/gru comparison; more DAgger time on hurdles, wide gaps and narrow stairs
 (per-type sampling weights).
+
+### v13d, student-v2 and the GRU student (2026-11-20)
+
+**v13d** (`2026-11-19_23-11-11-skill-v13d/logs/model_21495.pt`): v13c continued 2000 iterations with `history_fix`
+(robot-order history [t-2, t-1, t]). Compared with v13c evaluated under the robot history (tile-only, leg cap):
+better on curbs (+4..+9 points L2-L5), gaps (96-100 %), overhang L5 (98 vs 83 %), long stairs up L0-L1 (97/93 vs
+81/79), narrow stairs up L5 (63 vs 41 %) and slope riding (0.11 vs 0.27 falls/min); worse on hurdles L0 (63 vs 72)
+and L5 (35 vs 55) and narrow stairs up L2 (70 vs 90). A mixed result, not a clear new best teacher.
+
+**Two evaluation bugs** found on the way (both fixed in `skill_eval.py` / `train.py`):
+1. The student env keeps the training stair cancels (`p_cancel_by_type` 0.35), and the skill evaluation did not
+   clear them: on every stair type 35 % of the robots (teacher and student) were cancelled and counted as
+   refusals, and the cancel suite cancelled only 35 % of the stair robots. The comparisons were fair (same
+   handicap) but the stair numbers of the student-v1 table above are too low. The stair tables below are the
+   corrected re-runs (`student_v*_eval/skill_stairs_cancelfix.txt`, `cancel_cancelfix.txt`).
+2. `student_run_setup` passed only `student_history` to the evaluation env, so a student trained with
+   `teacher_legacy_history=False` was evaluated next to a teacher fed the old duplicated history. This only
+   affects the teacher rows of the student-v2 evaluation; the reference for v13d is its own evaluation
+   (`experiments/v13d_eval/`).
+
+**student-v2** (`2026-11-20_03-13-35-student-v2/logs/model_2999.pt`, exported): from v13d, teacher labels with the
+robot-order history, type weights raised for hurdles, wide gaps, long and narrow stairs. Done % L0..L5, student-v1
+(teacher v13c) vs student-v2 (teacher v13d), same student env:
+
+| type | student-v1 | student-v2 |
+|---|---|---|
+| curbs | 100/94/84/78/75/63 | 99/97/88/81/79/71 |
+| gaps | 100/93/92/95/92/83 | 100/91/88/98/96/95 |
+| overhang | 99/100/99/100/99/88 | 100/99/100/99/100/97 |
+| hurdles | 78/83/71/78/63/33 | 63/72/83/61/64/30 |
+| gaps_wide | 95/92/81/54/5/0 | 97/94/87/77/25/0 |
+| stairs up (corrected) | 97/89/78/96/100/90 | 96/92/83/100/95/83 |
+| stairs_wide up (corrected) | 97/85/96/98/99/93 | 97/90/92/92/93/92 |
+| stairs_long up (corrected) | 97/92/79/77/82/59 | 91/87/67/81/81/63 |
+| stairs_narrow up (corrected) | 86/76/75/87/77/57 | 78/75/69/81/91/56 |
+| narrow up, falls per step % | 1.27/2.25/1.66/0.37/0.49/0.76 | 2.05/2.24/2.72/1.71/0.61/1.41 |
+| cancel, fell % stairs / narrow | 1-13 / 4-20 | 5-17 / 8-25 |
+
+All stair descents are 90-100 % for both. Riding (falls/min flat/rough/slope/bumps): v1 0.04/0.07/0.21/0.47, v2
+0.04/0.06/0.11/0.45; with the camera off all episode v2 0.05/0.07/-/0.39. Corrected v13c next to student-v1 on
+stairs: teacher 95/100/89/96/100/92 (stairs up), 84/87/95/85/92/70 (narrow up), so the student is within a few
+points of its teacher on stairs except narrow up L1-L2 and long up L5.
+
+Reading: a tie. student-v2 inherits v13d's gains (curbs, gaps L5, overhang, wide gaps, slopes) and its losses
+(hurdles L0/L3), and is worse on narrow stairs and cancel. The student follows its teacher closely, so the next
+gains have to come from the teacher. student-v1 stays the default camera student because narrow stairs and cancel
+matter most indoors; student-v2 is kept.
+
+**GRU student** (`2026-11-19_23-13-11-student-gru-v1`, 3-frame input + GRU, 1500 iterations from v13c) against
+student-v1 at the same 1500 iterations: worse everywhere that needs timing: gaps L2 41 vs 92 %, wide gaps 0-45 vs
+0-93 %, hurdles L1 36 vs 81 %, narrow stairs up 2.6-11 % falls per step vs 0.6-1.3 %. The 1 s conv history stays;
+the GRU is not pursued (it may need a longer truncated-BPTT window and more iterations).
