@@ -54,11 +54,18 @@ class Navigator:
         """Full costmap first; if that has no path, the dynamic layers only near the robot (a far false edge or a
         person who has since moved must not cut the house in two); last, the static map alone (the edge guard and
         the live replanning protect the robot on the way)."""
-        for layers, near in ((("live", "terrain"), None), (("live", "terrain"), 2.5), ((), None)):
-            pts, why = self._plan_with(now, layers, near)
-            if pts is not None:
-                self.plan_level = 0 if near is None and layers else (1 if layers else 2)
-                return pts, why
+        r0 = self.cm.robot_r
+        levels = ((("live", "terrain"), None, r0), (("live", "terrain"), 2.5, r0), (("live",), 2.5, r0),
+                  (("live",), 2.5, 0.27))           # last: tight radius for doorways blurred in the tour map
+        try:
+            for k, (layers, near, r) in enumerate(levels):
+                self.cm.robot_r = r
+                pts, why = self._plan_with(now, layers, near)
+                if pts is not None:
+                    self.plan_level = k
+                    return pts, why
+        finally:
+            self.cm.robot_r = r0
         return pts, why
 
     def _plan_with(self, now, layers, near):
@@ -88,18 +95,30 @@ class Navigator:
         return pts, ""
 
     def _path_blocked(self):
+        """A new obstacle on the next 1.2 m of the path (live lidar hits only: the static and camera layers were
+        known when the path was planned and are refreshed by the periodic replan)."""
         if self.path is None:
             return False
-        occ, _ = self.cm.lethal()
+        cm = self.cm
+        recent = (cm.now - cm.live_hit) < cm.live_decay
+        x, y, _ = self.brain.map_pose()
         k0 = max(self.follower.progress, 0)
-        for a, b in zip(self.path[k0:k0 + 4], self.path[k0 + 1:k0 + 5]):
-            n = int(np.linalg.norm(b - a) / self.cm.res) + 2
-            P = a + (b - a) * np.linspace(0, 1, n)[:, None]
-            i, j = self.cm.ij(P)
-            ok = self.cm.g.inside(i, j)
-            if np.any(occ[i[ok], j[ok]]):
-                return True
-        return False
+        pts = [np.array([x, y])] + list(self.path[k0 + 1:k0 + 4])
+        left, n_hit = 1.2, 0
+        for a, b in zip(pts[:-1], pts[1:]):
+            L = float(np.linalg.norm(b - a))
+            if L < 1e-6:
+                continue
+            u = min(1.0, left / L)
+            n = int(L * u / cm.res) + 2
+            P = a + (b - a) * u * np.linspace(0, 1, n)[:, None]
+            i, j = cm.ij(P)
+            ok = cm.g.inside(i, j)
+            n_hit += int(np.sum(recent[i[ok], j[ok]]))
+            left -= L * u
+            if left <= 0:
+                break
+        return n_hit >= 2
 
     # ------------------------------------------------------------------------------------------------ 50 Hz
     def step(self, now):
@@ -111,7 +130,8 @@ class Navigator:
         d_goal = float(np.linalg.norm(self.goal - np.array([x, y])))
         if now < self.recover_until:                      # back off after a stall
             return PilotInput(speed=-0.25, leg_length=self.leg, source="nav")
-        need = self.path is None or now - self.t_plan > self.replan_s or self._path_blocked()
+        need = self.path is None or now - self.t_plan > self.replan_s or \
+            (now - self.t_plan > 0.5 and self._path_blocked())
         if self.path is None and now - self.t_plan < 1.0:
             need = False                                  # a plan just failed: wait before trying again
         if need and not (self.follower.turning_final if self.path is not None else False):
@@ -158,9 +178,14 @@ class Navigator:
             # the edge guard holds us in front of something the map did not show: mark it and go around
             self.guard_t = getattr(self, "guard_t", now) if getattr(self, "guard_on", False) else now
             self.guard_on = True
-            if now - self.guard_t > 1.5:
-                ahead = np.array([x + 0.55 * math.cos(th), y + 0.55 * math.sin(th)])
-                self.cm.block_disk(ahead, 0.30)
+            if now - self.guard_t < 4.0:
+                # first try to line up with the path (the guard only caps the speed; turning is free)
+                f.L = 0.25
+                v2, w2 = f.step((x, y, th))
+                return PilotInput(speed=0.0, yaw_rate=w2, leg_length=self.leg, source="nav")
+            else:
+                ahead = np.array([x + 0.6 * math.cos(th), y + 0.6 * math.sin(th)])
+                self.cm.block_disk(ahead, 0.25)
                 self.path, self.guard_on = None, False
                 self.message = "nav: obstacle in the way, planning around it"
                 return PilotInput(leg_length=self.leg, source="nav")

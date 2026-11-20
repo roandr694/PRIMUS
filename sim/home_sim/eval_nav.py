@@ -17,7 +17,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parents[1]))
-from brain.stack import HomeStack  # noqa: E402
+from brain import persist  # noqa: E402
 from runner import Scenario, run_stack  # noqa: E402
 import gt_grid  # noqa: E402
 from world import GT_PATH, HomeSim  # noqa: E402
@@ -86,7 +86,7 @@ def random_goals(sim, floor, n, seed, min_clear=0.5):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--map", default=str(HERE.parents[1] / "sim/models/house/robot_map"))
+    ap.add_argument("--map", default=str(HERE.parents[1] / "sim/models/house/robot_map_sem"))
     ap.add_argument("--floor", default="social")
     ap.add_argument("--spawn", default="home")
     ap.add_argument("--goals", type=int, default=20)
@@ -96,7 +96,7 @@ def main():
     a = ap.parse_args()
     sim = HomeSim(spawn=a.spawn)
     goals = random_goals(sim, a.floor, a.goals, a.seed)
-    stack = HomeStack.load(a.map)
+    stack = persist.load_stack(a.map, memory=False)          # floor maps + the camera layer of the tour
     tp = sim.truth()
     stack.on_state(sim.step().state)
     stack.slam.set_pose(tp.p[0], tp.p[1], tp.yaw + math.pi / 2)      # known start (relocalisation: eval_reloc)

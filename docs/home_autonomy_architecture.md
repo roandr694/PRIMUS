@@ -352,6 +352,22 @@ pipeline that does not fit is caught before the robot.
 | D4 | where the semantic tour is processed | **in sim on the desktop GPU; the real robot does everything on the Jetson + Pi** (so the sim uses the same models) |
 | D5 | where a payload goes (top tray vs lidar) | open: decide with the CAD before P5 on the real robot |
 
+## 11. Isaac Sim for camera fidelity (next)
+
+MuJoCo renders are good enough to develop and test the geometry (maps, costmaps, navigation, fusion), but an
+open-vocabulary detector trained on photos does poorly on them: on the semantic tour 42 of 57 confirmed objects lie
+on a real object, yet only ~25 % carry the right class (armchair / sofa, floor lamp, kitchen counter called
+"wardrobe"). Isaac Sim's RTX renderer of the same house (`sim/isaac/usd/house/cma_house.usd`, generated from the
+same `Scene`) closes most of that gap. Plan, in order:
+
+1. **Render-only co-simulation.** Physics, controller, policy and the brain stay in MuJoCo (validated); each camera
+   frame, the robot camera pose, the door / drawer joint positions and the person are mirrored into the Isaac stage
+   and the D435i colour + depth are rendered there (Replicator annotators), then handed to the brain exactly like
+   `HomeSim._rgbd()`. Isaac Sim 6.1 is already installed in the simulation environment.
+2. Re-run `eval_semantic.py` with the Isaac camera and compare object recall / precision and room naming.
+3. Later, if needed: the robot itself in Isaac (articulation from `sim/isaac/usd/robo_bipedal.usd`), for contact
+   and lighting effects on depth (glass, reflections, sun).
+
 ## References
 
 - OK-Robot: Liu et al., *OK-Robot: What Really Matters in Integrating Open-Knowledge Models for Robotics*, RSS 2024 —

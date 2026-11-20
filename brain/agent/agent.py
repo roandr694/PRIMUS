@@ -30,7 +30,14 @@ Responda SOMENTE com um objeto JSON, sem texto fora dele:
 {{"say": "<frase curta em português>", "calls": [{{"tool": "<nome>", "args": {{...}}}}]}}
 - "calls" pode ser vazio (só conversa) ou ter várias ações em sequência.
 - Use nomes de cômodos e objetos como o dono falou (em português); para objetos você pode usar o nome em inglês.
-- Se o pedido for impossível para o seu corpo, explique em "say" e não chame ferramentas."""
+- Se o pedido for impossível para o seu corpo, explique em "say" e não chame ferramentas.
+- "Leva X para Y" significa: alguém coloca X em cima de você (carry on), você vai até Y; você não pega nada.
+
+Exemplos:
+pedido: "me espera perto da geladeira" -> {{"say": "Vou te esperar na geladeira.", "calls": [{{"tool": "go_to", "args": {{"object": "geladeira"}}}}]}}
+pedido: "leva esse copo para a cozinha e volta" -> {{"say": "Ok, coloque o copo em cima de mim.", "calls": [{{"tool": "carry", "args": {{"on": true}}}}, {{"tool": "go_to", "args": {{"room": "cozinha"}}}}, {{"tool": "go_to", "args": {{"place": "aqui"}}}}]}}
+pedido: "dá uma olhada no quarto" -> {{"say": "Vou dar uma olhada.", "calls": [{{"tool": "go_to", "args": {{"room": "quarto"}}}}, {{"tool": "describe", "args": {{}}}}]}}
+pedido: "agacha" -> {{"say": "Agachando.", "calls": [{{"tool": "set_body", "args": {{"height": "baixo"}}}}]}}"""
 
 
 class Agent:
@@ -68,6 +75,13 @@ class Agent:
                 calls = obj.get("calls") or []
                 if not isinstance(calls, list):
                     raise ValueError("'calls' deve ser uma lista")
+                norm = []
+                for c in calls:                       # tolerate {"go_to": {...}} for {"tool": "go_to", "args": {...}}
+                    if isinstance(c, dict) and "tool" not in c and len(c) == 1:
+                        k, v = next(iter(c.items()))
+                        c = {"tool": k, "args": v if isinstance(v, dict) else {}}
+                    norm.append(c)
+                calls = norm
                 for c in calls:
                     if c.get("tool") not in TOOLS:
                         raise ValueError(f"ferramenta desconhecida {c.get('tool')}")
@@ -77,6 +91,11 @@ class Agent:
         return "desculpe, não entendi", [], raw
 
     def handle(self, text):
+        st = self.stack
+        if st.scene is not None and st.brain.state is not None and st.floor is not None and \
+                (st.behaviour is None or st.behaviour.done):
+            x, y, th = st.pose()                      # "volta" / "aqui" = where the robot was when asked
+            st.scene.add_place("aqui", (x, y), th, st.floor)
         calls = parse(text)
         source, say = "rules", ""
         if calls is None and self.llm is not None:
