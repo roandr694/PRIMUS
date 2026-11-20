@@ -7,7 +7,8 @@
     python3 house/render_views.py          # preview images of the generated scene
     python3 scripts/run_xbox_viewer.py --house    (or run_quest_viewer.py --world house)
 
-Everything written here is generated (sim/models/house/, sim/models/cena_casa_cma.xml) and ignored by Git.
+Everything written here is generated (sim/models/house/, sim/models/cena_casa_cma.xml, the ground truth
+sim/models/house/house_gt.json for sim/home_sim) and ignored by Git.
 """
 import argparse
 import json
@@ -94,12 +95,15 @@ def build(args):
     vegetation.LOD["level"] = "high" if args.quality == "full" else "low"
 
     import structure
-    print("architecture ...")
-    structure.build(s)
-    if not args.no_interiors:
-        import interiors
-        print("interiors ...")
-        interiors.furnish(s)
+    import semantics
+    recorder = semantics.Recorder(s)
+    with recorder.active():                          # ground truth for sim/home_sim (rooms, labelled objects)
+        print("architecture ...")
+        structure.build(s)
+        if not args.no_interiors:
+            import interiors
+            print("interiors ...")
+            interiors.furnish(s)
     if not args.no_site:
         import site_landscape
         print("site, terrain, vegetation ...")
@@ -156,6 +160,7 @@ def build(args):
         print("USD export ...")
         info["usd"] = str(export_usd.export(s, hdr, light_dir, mjcf.make_skybox.rotation_deg, VIEWS))
     (MODELS / "house" / "build_info.json").write_text(json.dumps(info, indent=1))
+    semantics.write(MODELS / "house" / "house_gt.json", s, recorder)
     print(json.dumps({k: v for k, v in info.items() if k != "notes"}, indent=1))
     print(f"wrote {SCENE}")
     return s, info
