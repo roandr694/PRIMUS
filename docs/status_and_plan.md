@@ -40,7 +40,11 @@ obs_version 5) for the full stack and the robot. Kept as alternatives: v13d (rob
 2. **Full-stack CPU tests** with student-v1: guard, A/B and X, the house environment (`sim/house`), longer runs
    with a fall detector in `autonomy_sim.py` (it has none; results are judged from the final pose and the planner
    trace).
-3. **Later:** banking in fast turns, front flip (needs measured actuators first).
+3. **Home autonomy** (semantic map of the house, room/object goals, navigation with replanning, LLM agent with
+   voice, follow-me, carry mode): architecture and phases in [home_autonomy_architecture.md](home_autonomy_architecture.md)
+   (approved 2026-11-20: ROS 2 on the Jetson, LLM only on board, phone/web voice first, the real robot maps
+   with the Jetson + Pi alone).
+4. **Later:** banking in fast turns, front flip (needs measured actuators first).
 
 ### When RL work resumes (notes from 2026-11-20)
 
