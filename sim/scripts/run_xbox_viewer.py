@@ -1,6 +1,7 @@
 """Drive the robot in the MuJoCo viewer with an Xbox (or any SDL) gamepad.
 
     python3 scripts/run_xbox_viewer.py [--flat]        # macOS: mjpython scripts/run_xbox_viewer.py
+    python3 scripts/run_xbox_viewer.py --house [--spawn varanda]   # the CMA house (house/README.md)
 
 Left stick Y: speed | right stick X: turn | triggers or D-pad: leg height (latches, 0.18-0.52 m)
 A: soft stop | B: hard brake | X: land <-> stand up (the landing gear is automatic) | Start: restart
@@ -9,6 +10,7 @@ If your gamepad maps differently, check the indices with scripts/inspect_gamepad
 """
 import argparse
 import os
+import sys
 import time
 
 import mujoco
@@ -58,6 +60,9 @@ class Gamepad:
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--flat", action="store_true", help="flat ground instead of the arena")
+    ap.add_argument("--house", action="store_true", help="the CMA house scene (build it first: house/build.py)")
+    ap.add_argument("--spawn", default="parked", help="--house: start keyframe (parked, varanda, kitchen, lawn, "
+                    "pool_deck, sea_deck, pavilion, upper_lounge, suite1, garden, terrace, lift_entry, parking)")
     ap.add_argument("--max-speed", type=float, default=1.5, help="[m/s]")
     ap.add_argument("--max-yaw-rate", type=float, default=1.8, help="[rad/s]")
     for name, default in (("speed-axis", 1), ("yaw-axis", 2), ("left-trigger-axis", 4), ("right-trigger-axis", 5),
@@ -69,11 +74,22 @@ def main():
     args = ap.parse_args()
 
     pad, pilot = Gamepad(args), Pilot(args.max_speed, args.max_yaw_rate)
-    _, model, data, path = rm.load(flat=args.flat)
+    _, model, data, path = rm.load(rm.HOUSE_MODEL_PATH if args.house else None, flat=args.flat)
+    house_rt = None
+    if args.house:
+        sys.path.insert(0, str(rm.PROJECT_ROOT / "house"))
+        from house_runtime import HouseRuntime
+        rm.reset_to_key(mujoco, model, data, args.spawn)
+        house_rt = HouseRuntime(mujoco, model)
+        house_rt.reset(data)
     policy = RepoControlPolicy(mujoco, model)
     policy.reset(data)
     print(f"{path.name}: the robot starts parked and stands up by itself.")
     with mujoco.viewer.launch_passive(model, data) as viewer:
+        if args.house:                                    # big scene: follow the robot
+            viewer.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+            viewer.cam.trackbodyid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base")
+            viewer.cam.distance, viewer.cam.elevation = 3.0, -18.0
         while viewer.is_running():
             start = time.time()
             level = pilot.level
@@ -81,9 +97,15 @@ def main():
             if pilot.level != level:
                 print(f"responsiveness: {pilot.level_name}")
             if reset:
-                rm.reset(mujoco, model, data)
+                if args.house:
+                    rm.reset_to_key(mujoco, model, data, args.spawn)
+                    house_rt.reset(data)
+                else:
+                    rm.reset(mujoco, model, data)
                 policy.reset(data)
             policy.apply(data, command)
+            if house_rt is not None:
+                house_rt.step(data)
             mujoco.mj_step(model, data)
             viewer.sync()
             time.sleep(max(0.0, model.opt.timestep - (time.time() - start)))

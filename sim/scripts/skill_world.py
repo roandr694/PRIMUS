@@ -47,7 +47,7 @@ class SimSensors:
         self.base = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "base")
         n = self.lidar.n_beams
         self.geomid, self.dist = np.zeros(n, np.int32), np.zeros(n, np.float64)
-        self.groups = np.array([1, 0, 0, 0, 0, 0], np.uint8)      # world geoms only (robot visuals are group 2)
+        self.groups = np.array([1, 0, 0, 0, 1, 0], np.uint8)      # world geoms (0) and house colliders (4); robot is 2/3
 
     def pose(self, data):
         return data.xpos[self.base].copy(), data.xmat[self.base].reshape(3, 3).copy()
@@ -126,8 +126,12 @@ class SkillWorld:
             _, spec = M.build(None, collision="full")
         else:
             self.ter = None
-            spec = mujoco.MjSpec.from_file(str(rm.FLAT_MODEL_PATH if scene == "flat" else rm.MODEL_PATH))
+            path = {"flat": rm.FLAT_MODEL_PATH, "house": rm.HOUSE_MODEL_PATH}.get(scene, rm.MODEL_PATH)
+            if not path.exists():
+                raise FileNotFoundError(f"{path} not found: build it with `python3 house/build.py` (from sim/)")
+            spec = mujoco.MjSpec.from_file(str(path))
             M.apply_hip_limits(spec)
+        self.spawn = "parked"                                      # house scene: keyframe used by place()
         for name, pos, fovy, tilt in extra_cameras:                # e.g. the pilot's first-person camera
             t = math.radians(tilt)
             spec.body("base").add_camera(name=name, pos=list(pos), fovy=fovy, xyaxes=[1, 0, 0, 0, math.sin(t), math.cos(t)])
@@ -152,6 +156,8 @@ class SkillWorld:
                 mujoco.mj_resetData(self.model, d)
                 d.qpos[:] = M.parked_qpos()
                 mujoco.mj_forward(self.model, d)
+            elif self.scene == "house":
+                rm.reset_to_key(mujoco, self.model, d, self.spawn)
             else:
                 rm.reset(mujoco, self.model, d)
             return

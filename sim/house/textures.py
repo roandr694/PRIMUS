@@ -198,22 +198,22 @@ def bake_specs():
     @tex("wood_ceiling", 1.2)
     def _():
         im = _load("WoodFloor051")
-        im = _tint(im, (0.62, 0.38, 0.20), 0.35)
-        return _slats(2048, 16, None, (0.10, 0.06, 0.03), 0.10, 1, vertical=False, src=im)
+        im = _gain(_tint(im, (0.80, 0.52, 0.28), 0.45), 1.28)
+        return _slats(2048, 24, None, (0.22, 0.13, 0.07), 0.10, 1, vertical=False, src=im)
 
     @tex("wood_panel", 1.6)        # vertical boards ~14 cm (rotate UVs in geometry: boards along V)
     def _():
         im = _load("WoodFloor064").rotate(90, expand=True)
-        im = _tint(im, (0.66, 0.42, 0.22), 0.30)
-        return _slats(2048, 12, None, (0.16, 0.10, 0.05), 0.08, 2, vertical=True, src=im)
+        im = _gain(_tint(im, (0.80, 0.53, 0.30), 0.40), 1.22)
+        return _slats(2048, 12, None, (0.25, 0.15, 0.08), 0.08, 2, vertical=True, src=im)
 
     @tex("wood_dark", 1.0)
     def _():
-        return _gain(_tint(_load("WoodFloor043"), (0.42, 0.20, 0.11), 0.45), 0.95)
+        return _gain(_tint(_load("WoodFloor043"), (0.52, 0.26, 0.14), 0.45), 1.08)
 
     @tex("wood_light", 1.0)
     def _():
-        return _gain(_tint(_load("WoodFloor064"), (0.72, 0.52, 0.32), 0.35), 1.05)
+        return _gain(_tint(_load("WoodFloor064"), (0.78, 0.57, 0.35), 0.35), 1.18)
 
     @tex("deck_grey", 1.6)
     def _():
@@ -225,7 +225,7 @@ def bake_specs():
 
     @tex("granite_tiles", 1.8)      # 90 cm light granite tiles
     def _():
-        im = _gain(_tint(_load("Granite003B"), (0.80, 0.79, 0.76), 0.25), 1.04)
+        im = _gain(_tint(_load("Granite003B"), (0.86, 0.84, 0.80), 0.55), 1.12)
         return _grout(im, 2, 0.0025, (150, 148, 142), random_shade=0.025, seed=3)
 
     @tex("dark_tiles", 2.4)         # 120 cm dark grey porcelain
@@ -239,11 +239,11 @@ def bake_specs():
 
     @tex("white_boards", 1.2)
     def _():
-        return _gain(_tint(_load("Concrete045"), (0.93, 0.92, 0.89), 0.4), 1.08)
+        return _gain(_tint(_load("Concrete045"), (0.96, 0.95, 0.92), 0.65), 1.28)
 
     @tex("plaster", 2.0)
     def _():
-        return _gain(_tint(_load("Concrete046"), (0.93, 0.91, 0.87), 0.5), 1.05)
+        return _gain(_tint(_load("Concrete046"), (0.95, 0.94, 0.91), 0.75), 1.30)
 
     @tex("concrete_light", 2.0)
     def _():
@@ -269,11 +269,15 @@ def bake_specs():
 
     @tex("soil_grass", 4.0)
     def _():
-        return _load("Ground037")
+        return _gain(_tint(_load("Grass004"), (0.24, 0.38, 0.14), 0.45), 0.95)
+
+    @tex("ground_forest", 3.0)
+    def _():
+        return _gain(_tint(_load("ScatteredLeaves009"), (0.30, 0.34, 0.16), 0.55), 0.85)
 
     @tex("soil_rocky", 3.0)
     def _():
-        return _load("Ground108")
+        return _gain(_tint(_load("Ground037"), (0.36, 0.38, 0.22), 0.35), 0.9)
 
     @tex("planting_bed", 2.0)
     def _():
@@ -295,7 +299,7 @@ def bake_specs():
     def _():
         return _gain(_tint(_load("Marble014"), (0.86, 0.82, 0.74), 0.3), 1.0)
 
-    @tex("fabric_white", 0.5)
+    @tex("fabric_white", 0.25)
     def _():
         return _gain(_tint(_load("Fabric062"), (0.92, 0.90, 0.86), 0.4), 1.08)
 
@@ -303,7 +307,7 @@ def bake_specs():
                     "fabric_teal": (0.30, 0.55, 0.52), "fabric_turquoise": (0.10, 0.62, 0.68),
                     "fabric_grey": (0.55, 0.56, 0.54), "fabric_sage": (0.58, 0.64, 0.57),
                     "fabric_beige": (0.80, 0.74, 0.64), "fabric_navy": (0.16, 0.22, 0.34)}.items():
-        T[nm] = ((lambda rgb=rgb: _tint(_load("Fabric036"), rgb, 0.85)), 0.5)
+        T[nm] = ((lambda rgb=rgb: _tint(_load("Fabric036"), rgb, 0.85)), 0.3)
 
     @tex("rug", 1.0)
     def _():
@@ -384,7 +388,7 @@ SOURCE_OF = {"wood_ceiling": "WoodFloor051", "wood_panel": "WoodFloor064", "wood
              "granite_tiles": "Granite003B", "dark_tiles": "Concrete031", "stone_counter": "Concrete033",
              "white_boards": "Concrete045", "plaster": "Concrete046", "concrete_light": "Concrete034",
              "pavers": "Concrete034", "stone_wall": "Rocks025", "stone_blocks": "Granite007A", "rock": "Rock020",
-             "soil_grass": "Ground037", "soil_rocky": "Ground108", "planting_bed": "ScatteredLeaves009",
+             "soil_grass": "Grass004", "soil_rocky": "Ground037", "ground_forest": "ScatteredLeaves009", "planting_bed": "ScatteredLeaves009",
              "lawn": "Grass004", "gravel_white": "Gravel023", "pool_mosaic": "Tiles132A",
              "bath_stone": "Marble014", "fabric_white": "Fabric062", "rug": "Carpet016", "rattan": "Wicker008A",
              "rope_weave": "Wicker005", "rush": "Wicker013", "steel_dark": "Metal046A", "stainless": "Metal055A",

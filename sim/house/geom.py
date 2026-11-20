@@ -364,10 +364,13 @@ class Body:
         self.name, self.frame, self.joint, self.mass = name, frame, joint, mass
         self.inertia = inertia
         self.parent = parent
+        self.children = []
         self.meshes = defaultdict(MeshBuf)
         self.colliders = []
         self.sites = []
         self.extra_xml = ""
+        self.com = (0, 0, 0)
+        self.gravcomp = 0.0
 
 
 class Scene:
@@ -384,6 +387,8 @@ class Scene:
         self.notes = defaultdict(list)      # room / object inventory for the README and the spawn points
         self.spawns = {}                    # name -> (x, y, z_floor, yaw)
         self.target = None                  # current Body or None (static)
+        self.joint_defaults = {}            # body name -> initial joint position for the keyframes
+        self.hfields = []                   # terrain heightfields (collision)
 
     # ------------------------------------------------------------------ helpers
     def _buf(self, mat):
@@ -508,11 +513,13 @@ class Scene:
             self.add_mesh(mat, V, N, box_uv(V, N) if uv is None else uv[f.reshape(-1)], F, frame)
 
     # ------------------------------------------------------------------ bodies
-    def body(self, name, frame, joint=None, mass=5.0, inertia=None):
+    def body(self, name, frame, joint=None, mass=5.0, inertia=None, parent=None):
         """joint: dict(type='hinge'|'slide', axis=(..), range=(lo, hi), damping, stiffness, springref, ref, qpos0,
-        frictionloss, armature) in the body frame; geometry added inside `with scene.in_body(b)` is body-local."""
-        b = Body(name, frame, joint, mass, inertia)
-        self.bodies.append(b)
+        frictionloss, armature) in the body frame; geometry added inside `with scene.in_body(b)` is body-local.
+        With `parent`, `frame` is relative to the parent body."""
+        b = Body(name, frame, joint, mass, inertia, parent)
+        (parent.children if parent is not None else self.bodies).append(b)
+        self.joint_defaults[name] = (joint or {}).get("qpos0", 0.0)
         return b
 
     @contextmanager

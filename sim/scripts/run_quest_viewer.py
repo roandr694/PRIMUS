@@ -7,6 +7,7 @@ a pilot panel, and sends the Quest controllers back.
     cd sim
     python3 scripts/run_quest_viewer.py [--flat]
     python3 scripts/run_quest_viewer.py --world skills --tile stairs --level 3 --start foot [--policy <exported>]
+    python3 scripts/run_quest_viewer.py --world house [--spawn varanda]     # the CMA house (house/README.md)
 
 On the Quest (same Wi-Fi): browser -> the https://<ip>:8443 address printed here -> accept the self-signed
 certificate warning (Advanced -> proceed) -> "Enter VR". The same page works in a desktop browser with an
@@ -47,6 +48,8 @@ import numpy as np  # noqa: E402
 from PIL import Image  # noqa: E402
 
 import skill_world as SW  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "house"))
+from house_runtime import HouseRuntime  # noqa: E402
 from perception.autonomy import Autonomy  # noqa: E402
 from pilot import Pilot  # noqa: E402
 from repo_control_policy import MAX_LEG_LENGTH, MIN_LEG_LENGTH, RepoControlPolicy, body_rpy  # noqa: E402
@@ -94,7 +97,9 @@ def simulate(shared, args):
     """Real-time physics + controller + autonomy; renders and JPEG-encodes the video while a pilot is connected."""
     world = SW.SkillWorld(args.world, torque=args.torque, extra_cameras=[FPV])
     model, data, sens = world.model, world.data, world.sens
+    world.spawn = args.spawn
     world.place(args.tile, args.level, args.start)
+    house_rt = HouseRuntime(mujoco, model) if args.world == "house" else None
     policy = RepoControlPolicy(mujoco, model)
     auto = Autonomy(args.policy, args.policy_mode)
     rec = SW.FallRecovery(world, policy, args.recovery) if args.recovery else None
@@ -112,6 +117,8 @@ def simulate(shared, args):
         world.place(args.tile, args.level, args.start)
         policy.reset(data)
         auto.reset()
+        if house_rt is not None:
+            house_rt.reset(data)
         return data.time, time.perf_counter()
 
     sim_t0, wall_t0 = restart()
@@ -167,6 +174,8 @@ def simulate(shared, args):
                 cmd = pilot_cmd
             out = policy.apply(data, cmd)
             world.drive_limits()
+            if house_rt is not None:                       # inclined lift automation (house/house_runtime.py)
+                house_rt.step(data)
             mujoco.mj_step(model, data)
             steps += 1
 
@@ -276,8 +285,12 @@ def serve(shared, port, ssl_ctx, ready):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--flat", action="store_true", help="flat ground instead of the arena (= --world flat)")
-    ap.add_argument("--world", choices=("arena", "flat", "skills"), default="arena",
-                    help="skills: the skill terrain of sim/warp_rl/skill_terrain.py (stairs, curbs, gaps, bars)")
+    ap.add_argument("--world", choices=("arena", "flat", "skills", "house"), default="arena",
+                    help="skills: the skill terrain of sim/warp_rl/skill_terrain.py (stairs, curbs, gaps, bars); "
+                         "house: the CMA house (build it first with house/build.py)")
+    ap.add_argument("--spawn", default="parked",
+                    help="--world house: start keyframe (parked = living room, varanda, kitchen, lawn, pool_deck, "
+                         "sea_deck, pavilion, upper_lounge, suite1, garden, terrace, lift_entry, parking)")
     ap.add_argument("--tile", default="stairs", choices=SW.ST.TYPES, help="--world skills: start tile type")
     ap.add_argument("--level", type=int, default=2, help="--world skills: start tile difficulty 0-5")
     ap.add_argument("--start", default="foot", choices=("foot", "top", "center"))

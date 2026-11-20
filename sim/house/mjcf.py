@@ -16,6 +16,10 @@ import numpy as np
 from geom import MOVING_CA, MOVING_CT, STATIC_CA, STATIC_CT, mat2quat, write_msh
 
 F = lambda x: f"{x:.6g}"                                     # noqa: E731
+# House colliders live in geom group 4: hidden in the renderers (default visible groups 0-2), cast by the
+# simulated lidar (skill_world.SimSensors includes group 4), shown in the MuJoCo viewer with the group-4 toggle.
+# (mj_ray ignores alpha-0 geoms, so invisible group-0 colliders would be missed by the lidar.)
+COLLISION_GROUP = 4
 
 
 def vec(a):
@@ -75,6 +79,7 @@ def make_skybox(hdr_path, out_png, face=1024, sun_azimuth_deg=-150.0, exposure=1
                 grid[r * face:(r + 1) * face, c * face:(c + 1) * face] = faces[ch]
     Image.fromarray(grid).save(out_png)
     sun_az = math.radians(sun_azimuth_deg)
+    make_skybox.rotation_deg = math.degrees(rot)               # for the USD dome light
     return np.array([math.cos(sun_lat) * math.cos(sun_az), math.cos(sun_lat) * math.sin(sun_az),
                      math.sin(sun_lat)]), math.degrees(sun_lat)
 
@@ -124,6 +129,19 @@ def write(scene, models_dir, robot_xml="robo_bipedal.xml", scene_name="cena_casa
     col_lines = []
     for i, c in enumerate(scene.colliders):
         col_lines.append(_collider_xml(c, i, STATIC_CT, STATIC_CA, "c"))
+    for h in scene.hfields:
+        data = np.asarray(h["heights"], np.float32)              # (nrow, ncol), row 0 = -y edge
+        lo, hi = float(data.min()), float(data.max())
+        norm = (data - lo) / max(hi - lo, 1e-6)
+        np.save(hdir / f"{h['name']}_heights.npy", data)        # for the USD export / other tools
+        rx, ry = h["half"]
+        elev = " ".join(f"{x:.4f}" for x in norm.ravel())        # inline: no file-path resolution issues
+        mesh_lines.append(f'    <hfield name="{h["name"]}" nrow="{data.shape[0]}" ncol="{data.shape[1]}" '
+                          f'size="{F(rx)} {F(ry)} {F(hi - lo)} 0.5" elevation="{elev}"/>')
+        col_lines.append(f'    <geom name="{h["name"]}" type="hfield" hfield="{h["name"]}" '
+                         f'pos="{vec((h["centre"][0], h["centre"][1], lo))}" friction="{vec(h["friction"])}" '
+                         f'contype="{STATIC_CT}" conaffinity="{STATIC_CA}" group="{COLLISION_GROUP}" '
+                         f'rgba="0.3 0.8 0.3 0.3"/>')
 
     body_lines = []
     for b in scene.bodies:
@@ -136,6 +154,8 @@ def write(scene, models_dir, robot_xml="robo_bipedal.xml", scene_name="cena_casa
             asset.append(f'    <texture name="ht_{m.texture}" type="2d" file="house/textures/{m.texture}.png"/>'
                          if f'name="ht_{m.texture}"' not in "\n".join(asset) else "")
             tex = f' texture="ht_{m.texture}" texrepeat="1 1"'
+        if m.texture and m.extra.get("water"):          # used on plane geoms: repeat per metre
+            tex = f' texture="ht_{m.texture}" texrepeat="{F(1 / m.tile)} {F(1 / m.tile)}" texuniform="true"'
         refl = m.reflectance if reflections else 0.0
         asset.append(f'    <material name="hm_{mat}"{tex} rgba="{vec(m.rgba)}" specular="{F(m.specular)}" '
                      f'shininess="{F(m.shininess)}" reflectance="{F(refl)}" emission="{F(m.emission)}"/>')
@@ -179,28 +199,37 @@ def _collider_xml(c, i, ct, ca, prefix):
     else:
         sz = vec(size[:1])
     return (f'    <geom name="{name}" type="{kind}" pos="{vec(c["pos"])}" size="{sz}"{_quat_attr(c["R"])} '
-            f'friction="{vec(fr)}"{sol} contype="{ct}" conaffinity="{ca}" group="0" rgba="0 0 0 0"/>')
+            f'friction="{vec(fr)}"{sol} contype="{ct}" conaffinity="{ca}" group="{COLLISION_GROUP}" '
+            f'rgba="{"0.95 0.45 0.1 0.35" if ct == STATIC_CT else "0.1 0.6 0.95 0.45"}"/>')
 
 
 def _body_xml(b, mdir, mesh_lines, used, stats, indent="    "):
     out = []
     q = _quat_attr(b.frame.R)
-    out.append(f'{indent}<body name="{b.name}" pos="{vec(b.frame.t)}"{q}>')
+    gc = f' gravcomp="{F(b.gravcomp)}"' if b.gravcomp else ""
+    out.append(f'{indent}<body name="{b.name}" pos="{vec(b.frame.t)}"{q}{gc}>')
     j = b.joint
     if j:
         attrs = [f'name="{b.name}_j"', f'type="{j.get("type", "hinge")}"', f'axis="{vec(j.get("axis", (0, 0, 1)))}"']
+        # the robot's <compiler angle="degree"> applies to the whole scene: hinge angles are written in degrees
+        hinge = j.get("type", "hinge") == "hinge"
+        ang = (lambda x: np.degrees(x)) if hinge else (lambda x: x)
         if "pos" in j:
             attrs.append(f'pos="{vec(j["pos"])}"')
         if "range" in j:
-            attrs.append(f'range="{vec(j["range"])}"')
-        for k in ("damping", "stiffness", "springref", "frictionloss", "armature", "ref"):
+            attrs.append(f'range="{vec(ang(np.asarray(j["range"], float)))}"')
+        for k in ("damping", "stiffness", "frictionloss", "armature"):
             if k in j:
                 attrs.append(f'{k}="{F(j[k])}"')
+        for k in ("springref", "ref"):
+            if k in j:
+                attrs.append(f'{k}="{F(float(ang(j[k])))}"')
         out.append(f'{indent}  <joint {" ".join(attrs)}/>')
     if b.mass is not None:
-        I = b.inertia if b.inertia is not None else (b.mass * 0.05,) * 3
-        com = getattr(b, "com", (0, 0, 0))
-        out.append(f'{indent}  <inertial pos="{vec(com)}" mass="{F(b.mass)}" diaginertia="{vec(I)}"/>')
+        I = list(b.inertia if b.inertia is not None else (b.mass * 0.05,) * 3)
+        for k in range(3):                     # enforce the triangle inequality A + B >= C
+            I[k] = min(I[k], 0.995 * (I[(k + 1) % 3] + I[(k + 2) % 3]))
+        out.append(f'{indent}  <inertial pos="{vec(b.com)}" mass="{F(b.mass)}" diaginertia="{vec(I)}"/>')
     for mat, buf in sorted(b.meshes.items()):
         arr = buf.arrays()
         if arr is None:
@@ -214,12 +243,14 @@ def _body_xml(b, mdir, mesh_lines, used, stats, indent="    "):
         used.add(mat)
         stats["body_tris"] += len(f)
     for i, c in enumerate(b.colliders):
-        out.append(indent + _collider_xml(c, i, MOVING_CT, MOVING_CA, f"{b.name}_c").strip().join(["  ", ""]))
+        out.append(f"{indent}  " + _collider_xml(c, i, MOVING_CT, MOVING_CA, f"{b.name}_c").strip())
     for s in b.sites:
         out.append(f'{indent}  <site name="{s["name"]}" pos="{vec(s["pos"])}" size="{F(s.get("size", 0.03))}" '
                    f'rgba="0 1 0 0" group="5"/>')
     if b.extra_xml:
         out.append(b.extra_xml)
+    for ch in b.children:
+        out += _body_xml(ch, mdir, mesh_lines, used, stats, indent + "  ")
     out.append(f"{indent}</body>")
     return out
 
@@ -249,7 +280,7 @@ def _write_scene(path, robot_xml, scene, keyframes, sun_dir):
         '  <include file="house/house_world.xml"/>',
         "  <visual>",
         '    <global azimuth="-60" elevation="-18" offwidth="1920" offheight="1080" fovy="50"/>',
-        '    <headlight ambient="0.32 0.32 0.34" diffuse="0.25 0.25 0.25" specular="0.05 0.05 0.05"/>',
+        '    <headlight ambient="0.40 0.40 0.42" diffuse="0.22 0.22 0.22" specular="0.04 0.04 0.04"/>',
         '    <quality shadowsize="8192" offsamples="8"/>',
         '    <map znear="0.01" zfar="40" haze="0.25" shadowclip="1.2" fogstart="3" fogend="10"/>',
         '    <rgba haze="0.78 0.85 0.92 1" fog="0.78 0.85 0.92 1"/>',
