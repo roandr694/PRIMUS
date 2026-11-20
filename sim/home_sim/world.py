@@ -41,6 +41,11 @@ GT_PATH = PRIMUS / "sim" / "models" / "house" / "house_gt.json"
 
 DT_CTRL = 0.02
 
+# hinged doors of the house (structure.py door()); the photos' keyframe has most of them closed
+HOUSE_DOORS = ("kitchen_door_w", "kitchen_door_e", "service_entry", "cellar_pivot", "lavabo_door", "staffbath_door",
+               "pantry_cellar_door", "master_door", "suite3_door", "suite2_door", "master_bath_door",
+               "suite2_bath_door", "suite3_bath_door", "upper_service_door", "study_door")
+
 
 def rot_z(a):
     c, s = math.cos(a), math.sin(a)
@@ -101,7 +106,7 @@ class Odometry:
     """Wheel-inertial odometry with the errors of the real one: wheel radius scale error, gyro bias (random walk),
     and slip noise that grows with acceleration (hops, stairs)."""
 
-    def __init__(self, pose, seed=0, scale_err=0.012, gyro_bias=2e-4, bias_walk=2e-5, slip=0.02):
+    def __init__(self, pose, seed=0, scale_err=0.02, gyro_bias=5e-4, bias_walk=4e-5, slip=0.03):
         self.rng = np.random.default_rng(seed)
         self.scale = 1.0 + self.rng.normal(0.0, scale_err)
         self.bias = self.rng.normal(0.0, gyro_bias)               # [rad/s]
@@ -137,8 +142,13 @@ class Odometry:
 
 class HomeSim:
     def __init__(self, spawn="home", policy_dir=STUDENT_V1, seed=0, rgbd_hz=0.0, rgb_size=(640, 360),
-                 torque=20.0, odom_noise=True, house_runtime=True):
-        self.world = SW.SkillWorld(scene="house", torque=torque, seed=seed)
+                 torque=20.0, odom_noise=True, house_runtime=True, doors_open=True, person=False):
+        hook = None
+        if person:
+            from person import add_person
+            hook = lambda spec: add_person(spec, start=(-30.0, -30.0, -20.0))   # parked out of sight until used
+        self.world = SW.SkillWorld(scene="house", torque=torque, seed=seed, spec_hook=hook)
+        self.walker = None
         self.m, self.d, self.sens = self.world.model, self.world.data, self.world.sens
         self.ctl = RepoControlPolicy(mujoco, self.m)
         self.pi = PiRuntime(policy_dir)
@@ -154,6 +164,7 @@ class HomeSim:
         self.m.vis.global_.offwidth = max(self.m.vis.global_.offwidth, w)
         self.m.vis.global_.offheight = max(self.m.vis.global_.offheight, h)
         self._rgb_renderer = None
+        self.doors_open = doors_open
         self.reset(spawn)
 
     # ------------------------------------------------------------------------------------------------ setup
@@ -167,6 +178,8 @@ class HomeSim:
         self.pi.reset()
         if self.house is not None:
             self.house.reset(self.d)
+        if self.doors_open:
+            self.set_doors(0.9)
         mujoco.mj_forward(self.m, self.d)
         self.t, self.k = 0.0, 0
         self.out = self.ctl.apply(self.d, RobotCommand(park=True))
@@ -179,6 +192,21 @@ class HomeSim:
     def truth(self):
         p, R = self.sens.pose(self.d)
         return Pose(p, R)
+
+    def set_doors(self, frac=0.9, names=HOUSE_DOORS):
+        """Open (frac of the hinge range, 0 = closed) the named doors; returns the names that exist."""
+        done = []
+        for n in names:
+            j = mujoco.mj_name2id(self.m, mujoco.mjtObj.mjOBJ_JOINT, f"{n}_j")
+            if j < 0:
+                continue
+            lo, hi = self.m.jnt_range[j]
+            end = hi if abs(hi) >= abs(lo) else lo
+            self.d.qpos[self.m.jnt_qposadr[j]] = frac * end
+            self.d.qvel[self.m.jnt_dofadr[j]] = 0.0
+            done.append(n)
+        mujoco.mj_forward(self.m, self.d)
+        return done
 
     def odom_to_world(self):
         """(dx, dy, dyaw): world pose of the odom origin drift (for scoring)."""
@@ -260,6 +288,8 @@ class HomeSim:
             self.world.drive_limits()
             if self.house is not None:
                 self.house.step(self.d)
+            if self.walker is not None and self.k % 20 == 0:
+                self.walker.step(self.t)
             mujoco.mj_step(self.m, self.d)
             self.t += self.m.opt.timestep
             self.k += 1

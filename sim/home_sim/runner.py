@@ -200,3 +200,60 @@ class VideoRecorder:
     def close(self):
         self.w.close()
         self.r.close()
+
+
+def run_stack(sc: Scenario, stack, task, policy_dir=STUDENT_V1, sim=None, video=None, verbose=True):
+    """Like run(), with the full HomeStack (SLAM, costmaps, navigator, memory, agent) instead of a bare Brain.
+    task: start(sim, stack), step(now, stack, ev) (issues goals / commands), done() -> None | (ok, reason)."""
+    t0 = time.time()
+    if sim is None:
+        sim = HomeSim(spawn=sc.spawn, policy_dir=policy_dir, seed=sc.seed, rgbd_hz=sc.rgbd_hz, odom_noise=sc.odom_noise)
+    else:
+        sim.reset(sc.spawn)
+    if sc.setup is not None:
+        sc.setup(sim)
+        mujoco.mj_forward(sim.m, sim.d)
+    coll = CollisionMonitor(sim.m)
+    rec = VideoRecorder(sim, video) if video else None
+    cmd = patch = None
+    path, last, log = 0.0, sim.truth().xy, []
+    falls, success, reason = 0, False, "timeout"
+    task.start(sim, stack)
+    last_msg = None
+    while sim.t < sc.timeout:
+        ev = sim.step(cmd, patch)
+        stack.on_state(ev.state)
+        if ev.depth is not None:
+            stack.on_depth(ev.depth)
+        if ev.scan is not None:
+            stack.on_scan(ev.scan)
+        if ev.rgbd is not None:
+            stack.on_rgbd(ev.rgbd)
+        coll.update(sim.d, sim.t)
+        xy = sim.truth().xy
+        path += float(np.linalg.norm(xy - last))
+        last = xy
+        if ev.fallen:
+            falls, reason = 1, "fell"
+            break
+        task.step(sim.t, stack, ev)
+        cmd, patch = stack.step(sim.t)
+        msg = getattr(task, "message", "") or stack.message or stack.nav.message
+        if msg != last_msg:
+            log.append((round(sim.t, 2), msg))
+            if verbose and msg:
+                print(f"  t={sim.t:6.2f} {msg}")
+            last_msg = msg
+        if rec is not None:
+            rec.frame(ev, stack.brain, task)
+        done = task.done()
+        if done is not None:
+            success, reason = done
+            break
+    if rec is not None:
+        rec.close()
+    res = Result(sc.name, success and falls == 0, reason, sim.t, falls, coll.count, path, tuple(np.round(last, 2)),
+                 time.time() - t0, log, dict(collisions=coll.events[:20]))
+    if hasattr(task, "extra"):
+        res.extra.update(task.extra())
+    return res, sim

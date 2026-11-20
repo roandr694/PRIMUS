@@ -41,8 +41,9 @@ class Brain:
     """Holds the robot-centric perception (elevation map, features, planner) and turns a pilot input into the
     Command for the Pi at 50 Hz, plus the ElevationPatch at 15 Hz."""
 
-    def __init__(self, guard=True):
+    def __init__(self, guard=True, slam=None):
         self.auto = Autonomy(policy_dir=None)                     # the policy runs on the Pi
+        self.slam = slam                                          # brain.mapping.slam.FloorSLAM (mapping or localising)
         self.auto.plan.guard_on = guard
         self.lidar = RPLidarA1()
         self.state, self.res, self.patch_due, self.hb = None, None, 0.0, 0
@@ -74,13 +75,25 @@ class Brain:
         pts, _ = self.lidar.points(scan.ranges, scan.pose.p, scan.pose.R)
         self.last_scan_pts = pts
         self.auto.on_lidar(pts, contact_z, self.axle_xy(scan.pose), scan.pose.yaw)
+        if self.slam is not None:
+            self.slam.on_scan(scan, self.lidar)
 
     def on_state(self, state: link.State):
         self.state = state
+        if self.slam is not None:
+            self.slam.on_state(state)
+
+    def map_pose(self):
+        """(x, y, th) in the map frame (th = math heading); odom if there is no localisation."""
+        if self.slam is not None:
+            return self.slam.pose()
+        s = self.state
+        return (s.x, s.y, wrap(s.yaw + math.pi / 2)) if s is not None else (0.0, 0.0, 0.0)
 
     def request_skill(self):
         """Start the offered skill as if A had been pressed (the navigator calls this at a skill edge)."""
-        self.skill_request = True
+        if getattr(self, "skills_allowed", True):
+            self.skill_request = True
 
     def cancel_skill(self):
         self.auto.plan.cancel()
