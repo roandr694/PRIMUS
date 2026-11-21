@@ -115,7 +115,8 @@ def start_pose(ter, tile, level, start):
 
 
 class SkillWorld:
-    def __init__(self, scene="skills", torque=20.0, seed=0, extra_cameras=(), torque_lag=0.002, power_limit=700.0):
+    def __init__(self, scene="skills", torque=20.0, seed=0, extra_cameras=(), torque_lag=0.002, power_limit=700.0,
+                 spec_hook=None):
         import robot_model as rm
         self.scene = scene
         if scene == "skills":
@@ -127,6 +128,9 @@ class SkillWorld:
         else:
             self.ter = None
             path = {"flat": rm.FLAT_MODEL_PATH, "house": rm.HOUSE_MODEL_PATH}.get(scene, rm.MODEL_PATH)
+            if str(scene).endswith(".xml"):                        # any generated scene (sim/apartments)
+                from pathlib import Path as _P
+                path = _P(scene)
             if not path.exists():
                 raise FileNotFoundError(f"{path} not found: build it with `python3 house/build.py` (from sim/)")
             spec = mujoco.MjSpec.from_file(str(path))
@@ -135,6 +139,8 @@ class SkillWorld:
         for name, pos, fovy, tilt in extra_cameras:                # e.g. the pilot's first-person camera
             t = math.radians(tilt)
             spec.body("base").add_camera(name=name, pos=list(pos), fovy=fovy, xyaxes=[1, 0, 0, 0, math.sin(t), math.cos(t)])
+        if spec_hook is not None:                                  # e.g. sim/home_sim adds a walking person
+            spec_hook(spec)
         self.sens = SimSensors(spec, seed=seed)
         self.model = m = self.sens.model
         self.data = mujoco.MjData(m)
@@ -156,7 +162,7 @@ class SkillWorld:
                 mujoco.mj_resetData(self.model, d)
                 d.qpos[:] = M.parked_qpos()
                 mujoco.mj_forward(self.model, d)
-            elif self.scene == "house":
+            elif self.scene == "house" or str(self.scene).endswith(".xml"):
                 rm.reset_to_key(mujoco, self.model, d, self.spawn)
             else:
                 rm.reset(mujoco, self.model, d)

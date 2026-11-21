@@ -7,6 +7,8 @@ biped_project/
 │   └── state/              # Isaac physics-check receipts
 ├── videos/                 # labelled copies of the run videos; `latest` -> the current one
 ├── reports/                # historical Isaac setup reports (2026-10-31)
+├── assets/cc0_textures/    # CC0 texture / HDRI downloads used by sim/house (rebuildable cache)
+├── references/cma_house/   # plans and photos of the CMA house (copyrighted, reference only, not in Git)
 └── scratch/isaac-runtime/  # rebuildable Isaac/Kit caches
 ```
 

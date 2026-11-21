@@ -14,6 +14,7 @@ the v12 recipe: [v12_plan.md](v12_plan.md). Controller and roadmap details: [con
 | Skill teacher | **v11 = best teacher**: hops flush, walled 12-step flights 92–98% at 13–19 cm; asymmetric stance, never trained always-on |
 | Always-on policy (assist + skills, one network) | **v13c = current best** (`2026-11-19_12-42-09-skill-v13c/logs/model_19496.pt`, v13b + more stair cancels; second v13 seed from the v12b lineage reproduces the recipe; v13b `2026-11-19_02-03-03-skill-v13b/logs/model_17997.pt`; seed 1 `2026-11-18_09-39-32-skill-v12b-seed1/logs/model_12999.pt` kept as fallback), by the tile-only evaluation: assist 0.06 falls/min on flat with pushes (LQR 0.29); gaps to 45 cm 94-100%, overhang 88-100% with a leg command of at most 0.36 m, curbs 68-100%, hurdles to 19 cm 69-85% (24 cm: 41%), wide gaps to 0.6 m 77-100%; narrow stairs 0.5-1.4% falls per step. It no longer refuses 0.7-0.8 m gaps: the detector must never offer them (it offers gaps ≤ 45 cm only). Remaining limits partly physical (24 cm hurdles, 0.7-0.8 m gaps). See [experiments.md §7](experiments.md) |
 | Camera student | **student-v1** = default (from v13c; `2026-11-19_16-46-41-student-v1/logs/model_2999.pt`, exported): within a few points of its teacher on riding, stairs, overhang and gaps to 45 cm; behind on hurdles L5, wide gaps, narrow/long stairs up. student-v2 (from v13d, robot-order history) is a tie: better curbs/gaps/overhang/wide gaps, worse narrow stairs and cancel. The 1 s conv history beats a GRU student. Both run in the full CPU stack. See [experiments.md §7](experiments.md) |
+| Home autonomy (semantic map, navigation, agent) | P0-P4 in the MuJoCo house + realistic Isaac apartments (branch `home-autonomy`): camera voxel map, EKF localisation (6 cm mean on the CMA tour), Isaac-rendered camera (detector recall 0 → 48 %), agent 11/16 in an apartment; navigation out of the furnished CMA living room is the open problem. See [home_autonomy_architecture.md §12](home_autonomy_architecture.md) |
 | Real robot | drivers, state estimation, actuator characterisation still open |
 
 ## v12 in one paragraph
@@ -40,7 +41,11 @@ obs_version 5) for the full stack and the robot. Kept as alternatives: v13d (rob
 2. **Full-stack CPU tests** with student-v1: guard, A/B and X, the house environment (`sim/house`), longer runs
    with a fall detector in `autonomy_sim.py` (it has none; results are judged from the final pose and the planner
    trace).
-3. **Later:** banking in fast turns, front flip (needs measured actuators first).
+3. **Home autonomy** (semantic map of the house, room/object goals, navigation with replanning, LLM agent with
+   voice, follow-me, carry mode): architecture and phases in [home_autonomy_architecture.md](home_autonomy_architecture.md)
+   (approved 2026-11-20: ROS 2 on the Jetson, LLM only on board, phone/web voice first, the real robot maps
+   with the Jetson + Pi alone).
+4. **Later:** banking in fast turns, front flip (needs measured actuators first).
 
 ### When RL work resumes (notes from 2026-11-20)
 
