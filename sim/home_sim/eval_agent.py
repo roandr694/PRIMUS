@@ -66,7 +66,7 @@ CASES = [
     ("vai para a varanda", in_room("varanda"), 120),
     ("vai para perto da mesa de jantar", near("dining table", 1.4), 120),
     ("vou botar esse copo em cima de você", flag("carrying", True), 5),
-    ("vai para a lavanderia", in_room(["service area", "service hall"]), 150),
+    ("vai para a área de serviço", in_room(["service area", "service hall"]), 180),
     ("já tirei o copo", flag("carrying", False), 5),
     ("fica mais alto", leg(0.40, 0.52), 10),
     ("onde você está?", (lambda sim, st: True, "answers"), 3),
@@ -124,7 +124,7 @@ def run_case(sim, stack, agent, text, check, timeout, coll, verbose=True):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--map", default=str(HERE.parents[1] / "sim/models/house/robot_map"))
+    ap.add_argument("--map", default=str(HERE.parents[1] / "sim/models/house/robot_map_sem2"))
     ap.add_argument("--spawn", default="home")
     ap.add_argument("--llm", default=None)
     ap.add_argument("--only-llm", action="store_true")

@@ -222,6 +222,8 @@ class SemanticMemory:
         """Text -> best matching confirmed objects [(score, Obj)]: CLIP text-image similarity, plus a bonus when
         the detector's class names the query."""
         objs = [o for o in self.confirmed(floor) if room is None or o.room == room]
+        if text.lower() in self.classes:               # a known class: only objects of that class count
+            objs = [o for o in objs if o.cls == text.lower()]
         if not objs:
             return []
         t = self.emb.texts([text])[0]
@@ -232,6 +234,8 @@ class SemanticMemory:
                 s += 0.1
             out.append((s, o))
         out.sort(key=lambda p: -p[0])
+        if text.lower() not in self.classes:            # free text: only reasonably similar crops
+            out = [p for p in out if p[0] > 0.24]
         return out[:top]
 
     def summary(self):

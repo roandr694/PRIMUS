@@ -19,7 +19,7 @@ from scipy import ndimage
 
 
 class Costmap:
-    def __init__(self, grid, robot_r=0.31, soft=0.85, unknown_ok=1.0, live_decay=8.0):
+    def __init__(self, grid, robot_r=0.31, soft=1.0, unknown_ok=1.0, live_decay=8.0):
         self.g = grid                                     # brain.mapping.grid.Grid (static, from the tour)
         self.res, self.origin = grid.res, grid.origin
         self.ny, self.nx = grid.L.shape
@@ -168,7 +168,7 @@ class Costmap:
     def cost(self, robot_xy=None, layers=("live", "terrain"), near=None):
         occ, unk = self.lethal(robot_xy, layers, near)
         dist = ndimage.distance_transform_edt(~occ) * self.res
-        c = 1.0 + 25.0 * np.clip((self.soft - dist) / (self.soft - self.robot_r), 0.0, 1.0) ** 2
+        c = 1.0 + 40.0 * np.clip((self.soft - dist) / (self.soft - self.robot_r), 0.0, 1.0) ** 2
         if "terrain" in layers and robot_xy is not None:
             far = ndimage.binary_dilation(self.terrain, iterations=4) & ~self._disk(robot_xy, self.terrain_lethal_r)
             c = c + 15.0 * far

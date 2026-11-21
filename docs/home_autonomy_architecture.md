@@ -1,7 +1,8 @@
 # Home autonomy: architecture and plan
 
-*Drafted 2026-11-20. Status: approved plan, nothing implemented yet. The owner's decisions are in
-[§10](#10-decisions); D5 is still open.*
+*Drafted 2026-11-20. Status: P0-P4 implemented in simulation (MuJoCo, CMA house), results in
+[§12](#12-implementation-status-simulation); not yet on the robot. The owner's decisions are in
+[§10](#10-decisions); D5 is still open. Code: `brain/`, `robot/link.py`, `robot/pi_runtime.py`, `sim/home_sim/`.*
 
 ## 1. Goal
 
@@ -367,6 +368,25 @@ same `Scene`) closes most of that gap. Plan, in order:
 2. Re-run `eval_semantic.py` with the Isaac camera and compare object recall / precision and room naming.
 3. Later, if needed: the robot itself in Isaac (articulation from `sim/isaac/usd/robo_bipedal.usd`), for contact
    and lighting effects on depth (glass, reflections, sun).
+
+## 12. Implementation status (simulation)
+
+*2026-11-21, branch `home-autonomy`, MuJoCo CMA house, student-v1 policy on the Pi side, social level.*
+
+| phase | state | measured |
+|---|---|---|
+| P0 foundations | done | link messages (UDP structs), Pi runtime (supervisor + policy on the elevation patch), HomeSim (drifting odometry, D435i depth + aligned RGB-D, lidar, fall detector, walking person), ground truth (24 rooms, 175 objects), scenario runner |
+| P1 localisation + maps | works, drifts in long tours | matcher alone ~1 cm; full indoor tour: mean pose error 26 cm (max 1.6 m after a wheel slip), map precision 79 %, coverage 83 %; localisation on the saved map 2-7 cm |
+| P2 navigation | **partial** | goals inside a room reach 0.1-0.2 m; leaving the furnished living room (dining set, sofas, pivot doors) fails: 2/10 random goals. The plans are right, execution stalls in ~0.9 m gaps and at the pivot-door channels (guard stops, route switching). Main next work |
+| P3 semantic memory | geometry ok, classes weak on renders | 42/57 confirmed objects lie on a real object, ~25 % with the right class (OWL-ViT B/32 on MuJoCo renders); rooms: 5/9 named from objects; with the owner's tour voice notes the main rooms resolve by name. CLIP scene classification of keyframes is uninformative on these renders |
+| P4 agent | rules done, LLM tested offline | Portuguese intents cover the simple commands; 8/16 scripted requests succeed in the house (failures: the P2 limit, objects never detected); Qwen3-4B answers valid JSON in Portuguese in 0.5-0.9 s with few-shot examples; Qwen3-1.7B 0.3-0.7 s but answers partly in English; the in-house LLM run ran out of GPU memory next to the vision models (needs the 4-bit build, as on the Jetson) |
+| P5 behaviours | implemented, not scored | go_to, set_body, park/stand, stop, turn, cross (skills), follow (person tracker), find, carry mode (gentle limits, no skills), sequences |
+| P6 voice | not started | text chat page (`brain/ui/server.py`, `sim/home_sim/run_home.py`) is the entry point speech will use |
+| Isaac camera (§11) | not started | |
+
+Next, in order: P2 execution in tight furnished spaces (prefer wide corridors over the dining gap, door-channel
+alignment manoeuvre, guard corridor while turning), loop closure or a second mapping pass for long tours, the
+Isaac render bridge for detector fidelity, then the LLM in 4-bit next to the vision models and voice.
 
 ## References
 

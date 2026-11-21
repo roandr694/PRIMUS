@@ -55,8 +55,9 @@ class Navigator:
         person who has since moved must not cut the house in two); last, the static map alone (the edge guard and
         the live replanning protect the robot on the way)."""
         r0 = self.cm.robot_r
-        levels = ((("live", "terrain"), None, r0), (("live", "terrain"), 2.5, r0), (("live",), 2.5, r0),
-                  (("live",), 2.5, 0.27))           # last: tight radius for doorways blurred in the tour map
+        # the camera layer near the robot (chairs, table tops the lidar misses) stays in every level
+        levels = ((("live", "terrain"), None, r0), (("live", "terrain"), None, 0.27),
+                  (("live", "terrain"), 2.5, 0.27))  # tight radius: doorways blurred in the tour map
         try:
             for k, (layers, near, r) in enumerate(levels):
                 self.cm.robot_r = r

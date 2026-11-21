@@ -42,6 +42,7 @@ class Room:
     neighbours: dict = field(default_factory=dict)   # room id -> doorway (x, y)
     label: str = None             # owner's name ("sala de TV")
     pt: str = ""
+    aliases: list = field(default_factory=list)   # other names the owner used for the same room
 
     def to_dict(self):
         return dict(id=self.id, floor=self.floor, name=self.name, type=self.type, label=self.label,
@@ -177,9 +178,11 @@ def describe(lab, grid, memory, floor, labels=None):
             sc = scene_scores(rid, lab, grid, memory, floor)
         except Exception:
             sc = None
-        if sc:                                          # views: up to 4 points for a confident scene
-            for k, v in sc.items():
-                scores[k] = scores.get(k, 0.0) + 4.0 * v
+        if sc:                                          # views: only a confident scene counts (renders are hard)
+            top = sorted(sc.values(), reverse=True)
+            if top[0] > 0.45 and top[0] > 1.8 * top[1]:
+                for k, v in sc.items():
+                    scores[k] = scores.get(k, 0.0) + 2.5 * v
         best = max(scores, key=scores.get) if scores else None
         if best is not None and best == "hallway" and scores[best] >= 2.0:
             pass
@@ -202,9 +205,10 @@ def describe(lab, grid, memory, floor, labels=None):
         xy = grid.xy(np.array([i]), np.array([j]))[0]
         byid[a].neighbours[b] = (float(xy[0]), float(xy[1]))
         byid[b].neighbours[a] = (float(xy[0]), float(xy[1]))
-    for rid, name in (labels or {}).items():
+    for rid, names in (labels or {}).items():
         if rid in byid:
-            byid[rid].label = name
+            names = names if isinstance(names, list) else [names]
+            byid[rid].label, byid[rid].aliases = names[0], names[1:]
     for o in objs:
         o.room = byid[obj_room[o.id]].name if obj_room.get(o.id) in byid else None
     return rooms

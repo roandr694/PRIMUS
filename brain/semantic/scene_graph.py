@@ -81,8 +81,8 @@ class SceneGraph:
             labels = {}
             for xy, name in self.labels.get(fid, []):
                 rid = R.room_at(lab, g, xy)
-                if rid:
-                    labels[rid] = name
+                if rid and name not in labels.get(rid, []):
+                    labels.setdefault(rid, []).append(name)
             self.rooms[fid] = R.describe(lab, g, mem, fid, labels)
         return self
 
@@ -99,6 +99,8 @@ class SceneGraph:
         self.labels.setdefault(floor, []).append((tuple(xy), name))
         r = self.room_of(xy, floor)
         if r is not None:
+            if r.label and r.label != name:
+                r.aliases.append(r.label)
             r.label = name
         return r
 
@@ -114,7 +116,7 @@ class SceneGraph:
         rooms = self.all_rooms()
         rooms.sort(key=lambda r: (r.floor != floor, -r.area))
         for r in rooms:
-            if r.label and norm(r.label) == t:
+            if any(norm(n) == t for n in [r.label or ""] + r.aliases if n):
                 return r
         for r in rooms:
             if norm(r.name) == t or norm(r.pt) == t:

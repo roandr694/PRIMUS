@@ -46,13 +46,19 @@ class TourTask:
     def __init__(self, sim, floor, rooms=None):
         self.tour = TourDriver(sim, floor, order=rooms)
         self.message = ""
+        self.notes = []                                   # (floor, xy, name) said by the owner during the tour
 
     def start(self, sim, stack):
         self.tour.start(sim, stack.brain)
 
     def step(self, now, stack, ev):
+        before = len(self.tour.visited)
         stack.pilot_override = self.tour.step(now, stack.brain, ev)
         self.message = self.tour.message
+        if len(self.tour.visited) > before:              # the owner's voice note: "esta é a <cômodo>"
+            name = self.tour.visited[-1]
+            pt = next((r["names_pt"][0] for r in self.tour.gt["rooms"] if r["name"] == name), name)
+            self.notes.append((stack.slam.floor, tuple(stack.pose()[:2]), pt))
 
     def done(self):
         return self.tour.done()
@@ -133,7 +139,11 @@ def main():
     print(f"memory: {len(mem.confirmed())} confirmed objects ({len(mem.objects)} incl. tentative), "
           f"{len(mem.keyframes)} keyframes; detector {1000 * tm['det'] / max(tm['n'], 1):.0f} ms, "
           f"CLIP {1000 * tm['emb'] / max(tm['n'], 1):.0f} ms per frame; classes {mem.summary()}")
-    stack.scene = SceneGraph().rebuild(stack)
+    stack.scene = SceneGraph()
+    for fid, xy, name in task.notes:
+        stack.scene.labels.setdefault(fid, []).append((xy, name))
+    stack.scene.rebuild(stack)
+    print("owner's notes during the tour:", [n for _, _, n in task.notes])
     gt = json.loads(GT_PATH.read_text())
     f, n, good, npred, per = score_objects(mem, gt, a.floor)
     print(f"objects: recall {f}/{n} = {100 * f / max(n, 1):.0f} %, precision {good}/{npred} = "
