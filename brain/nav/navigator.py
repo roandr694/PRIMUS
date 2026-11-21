@@ -23,7 +23,7 @@ def wrap(a):
 
 
 class Navigator:
-    def __init__(self, brain, costmap, v_max=0.6, leg=0.30, replan_s=2.0, stall_s=4.0):
+    def __init__(self, brain, costmap, v_max=0.6, leg=0.30, replan_s=4.0, stall_s=5.0):
         self.brain, self.cm = brain, costmap
         self.v_max, self.leg, self.replan_s, self.stall_s = v_max, leg, replan_s, stall_s
         self.follower = PathFollower(v_max=v_max)
@@ -94,6 +94,29 @@ class Navigator:
         self.cost_snapshot = cost
         return pts, ""
 
+    def _route_cost(self, pts, start):
+        """Cost of driving from start along pts on the latest cost grid (inf if it crosses a forbidden cell)."""
+        c = getattr(self, "cost_snapshot", None)
+        if c is None or pts is None or len(pts) == 0:
+            return np.inf
+        P = [np.asarray(start, float)] + [np.asarray(p, float) for p in pts]
+        total, travelled = 0.0, 0.0
+        for a, b in zip(P[:-1], P[1:]):
+            L = float(np.linalg.norm(b - a))
+            n = int(L / self.cm.res) + 2
+            s = np.linspace(0, 1, n)
+            Q = a + (b - a) * s[:, None]
+            i, j = self.cm.ij(Q)
+            ok = self.cm.g.inside(i, j)
+            v = np.where(ok, c[np.clip(i, 0, self.cm.ny - 1), np.clip(j, 0, self.cm.nx - 1)], np.inf)
+            near = travelled + s * L < 0.6                    # the first 0.6 m may cross the inflation around us
+            v = np.where(near & ~np.isfinite(v), 12.0, v)
+            if not np.all(np.isfinite(v)):
+                return np.inf
+            total += L * float(np.mean(v))
+            travelled += L
+        return total
+
     def _path_blocked(self):
         """A new obstacle on the next 1.2 m of the path (live lidar hits only: the static and camera layers were
         known when the path was planned and are refreshed by the periodic replan)."""
@@ -130,8 +153,8 @@ class Navigator:
         d_goal = float(np.linalg.norm(self.goal - np.array([x, y])))
         if now < self.recover_until:                      # back off after a stall
             return PilotInput(speed=-0.25, leg_length=self.leg, source="nav")
-        need = self.path is None or now - self.t_plan > self.replan_s or \
-            (now - self.t_plan > 0.5 and self._path_blocked())
+        blocked = self.path is not None and now - self.t_plan > 0.5 and self._path_blocked()
+        need = self.path is None or now - self.t_plan > self.replan_s or blocked
         if self.path is None and now - self.t_plan < 1.0:
             need = False                                  # a plan just failed: wait before trying again
         if need and not (self.follower.turning_final if self.path is not None else False):
@@ -147,10 +170,19 @@ class Navigator:
                 self.cm.clear_blocked() if self.fails == 2 else None
                 return idle
             self.fails = 0
-            if self.path is not None:
-                self.stats["replans"] += 1
-            self.path = pts
-            self.follower.set_path(pts, self.goal_heading)
+            if self.path is not None and not blocked:
+                # hysteresis: keep the current route unless the new one is clearly cheaper on today's costmap
+                old = self._route_cost(self.path[max(self.follower.progress, 0):], (x, y))
+                new = self._route_cost(pts, (x, y))
+                if np.isfinite(old) and new > 0.75 * old:
+                    pts = None
+            if pts is None:
+                self.stats["kept"] = self.stats.get("kept", 0) + 1
+            else:
+                if self.path is not None:
+                    self.stats["replans"] += 1
+                self.path = pts
+                self.follower.set_path(pts, self.goal_heading)
             self.status = "driving"
             if self.t_progress is None:
                 self.t_progress = now

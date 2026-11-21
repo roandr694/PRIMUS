@@ -96,7 +96,11 @@ class SetBody(Behaviour):
         self.target = stack.leg
 
     def tick(self, now, stack):
-        if now - self.started > 1.5 or abs(stack.brain.state.leg_length - self.target) < 0.015:
+        L = stack.brain.state.leg_length
+        if (now - self.started > 0.5 and abs(L - self.target) < 0.02) or now - self.started > 4.0:
+            if abs(L - self.target) > 0.03:
+                self.finish(False, f"só consegui chegar a {L * 100:.0f} cm de perna (algo acima de mim limita a altura)")
+                return PilotInput(leg_length=stack.leg, source="agent")
             word = "mais baixo" if self.target < 0.27 else ("mais alto" if self.target > 0.36 else "na altura normal")
             self.finish(True, f"pronto, estou {word} (perna {self.target * 100:.0f} cm)")
         return PilotInput(leg_length=stack.leg, source="agent")

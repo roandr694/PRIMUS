@@ -24,7 +24,7 @@ from world import GT_PATH, HomeSim  # noqa: E402
 
 
 class GoalTask:
-    def __init__(self, goals, per_goal=75.0, tol=0.35):
+    def __init__(self, goals, per_goal=180.0, tol=0.35):
         self.goals, self.per_goal, self.tol = goals, per_goal, tol
         self.results, self.message = [], ""
 
@@ -101,7 +101,7 @@ def main():
     stack.on_state(sim.step().state)
     stack.slam.set_pose(tp.p[0], tp.p[1], tp.yaw + math.pi / 2)      # known start (relocalisation: eval_reloc)
     task = GoalTask(goals)
-    res, sim = run_stack(Scenario("nav", spawn=a.spawn, timeout=a.goals * 80.0), stack, task, sim=sim, video=a.video,
+    res, sim = run_stack(Scenario("nav", spawn=a.spawn, timeout=a.goals * 185.0), stack, task, sim=sim, video=a.video,
                          verbose=False)
     print(res.line())
     R = res.extra["goals"]

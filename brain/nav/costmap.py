@@ -33,6 +33,7 @@ class Costmap:
         self.keepout = np.zeros((self.ny, self.nx), bool)
         self.blocked = np.zeros((self.ny, self.nx), bool)              # navigator: corridors found impassable
         self.now = 0.0
+        self.terrain_lethal_r = 2.0
         self._cache = None
 
     def ij(self, xy):
@@ -137,7 +138,10 @@ class Costmap:
         dyn = np.zeros_like(static_occ)
         if "live" in layers:
             dyn |= recent_hit
-        if "terrain" in layers:
+        if "terrain" in layers and robot_xy is not None:
+            # camera edges are lethal only near the robot (fresh, short range); farther they are a soft cost
+            dyn |= self.terrain & self._disk(robot_xy, self.terrain_lethal_r)
+        elif "terrain" in layers:
             dyn |= self.terrain
         if near is not None and robot_xy is not None:
             i, j = self.ij(np.asarray(robot_xy))
@@ -154,10 +158,20 @@ class Costmap:
             unk[sl] = False
         return occ, unk
 
+    def _disk(self, xy, r):
+        m = np.zeros((self.ny, self.nx), bool)
+        i, j = self.ij(np.asarray(xy))
+        k = int(r / self.res)
+        m[max(i - k, 0):i + k + 1, max(j - k, 0):j + k + 1] = True
+        return m
+
     def cost(self, robot_xy=None, layers=("live", "terrain"), near=None):
         occ, unk = self.lethal(robot_xy, layers, near)
         dist = ndimage.distance_transform_edt(~occ) * self.res
         c = 1.0 + 25.0 * np.clip((self.soft - dist) / (self.soft - self.robot_r), 0.0, 1.0) ** 2
+        if "terrain" in layers and robot_xy is not None:
+            far = ndimage.binary_dilation(self.terrain, iterations=4) & ~self._disk(robot_xy, self.terrain_lethal_r)
+            c = c + 15.0 * far
         c[dist <= self.robot_r] = np.inf
         c[unk] = np.inf
         return c

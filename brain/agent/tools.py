@@ -68,6 +68,10 @@ class ToolBox:
             elif sg.find_room(target, st.floor) is not None:
                 room = target
             else:
+                from ..semantic.scene_graph import ROOM_WORDS, norm
+                if any(norm(w) in norm(target) for w in ROOM_WORDS):
+                    return None, (f"ainda não sei qual cômodo é '{target}'. Me leve até lá e diga "
+                                  f"'esta é a {target}' que eu aprendo")
                 object = target
         goal, why = sg.resolve(st, room=room, obj=object, place=place)
         if goal is None:

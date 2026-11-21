@@ -122,6 +122,32 @@ def doorways(lab):
     return {k: (float(np.mean([p[0] for p in v])), float(np.mean([p[1] for p in v])), len(v)) for k, v in pairs.items()}
 
 
+SCENE_PROMPTS = {"kitchen": "a kitchen", "living room": "a living room", "dining room": "a dining room",
+                 "bedroom": "a bedroom", "bathroom": "a bathroom", "laundry": "a laundry room",
+                 "office": "a home office", "hallway": "a hallway"}
+
+
+def scene_scores(rid, lab, grid, memory, floor):
+    """CLIP scene classification of the keyframes taken inside the room (HOV-SG's room features, simplified):
+    mean softmax over the room types, or None without keyframes."""
+    if memory is None or not getattr(memory, "keyframes", None):
+        return None
+    imgs = []
+    for stamp, f, (x, y, th), rgb in memory.keyframes:
+        if f != floor:
+            continue
+        if room_at(lab, grid, (x, y)) == rid:
+            imgs.append(rgb)
+    if not imgs:
+        return None
+    types = list(SCENE_PROMPTS)
+    T = memory.emb.texts([SCENE_PROMPTS[k] for k in types])
+    V = memory.emb.images(imgs[:24])
+    p = np.exp(100.0 * (V @ T.T))
+    p /= p.sum(1, keepdims=True)
+    return dict(zip(types, p.mean(0)))
+
+
 def describe(lab, grid, memory, floor, labels=None):
     """Rooms with their objects (from the memory), a type and a unique name; owner labels {room_id: name}."""
     res = grid.res
@@ -147,8 +173,17 @@ def describe(lab, grid, memory, floor, labels=None):
         scores = {t: sum(w.get(o.cls, 0.0) * min(1.0, o.hits / 3) for o in inside) for t, w in ROOM_TYPES.items()}
         if not any(o.cls in ("bed", "nightstand") for o in inside):
             scores["bedroom"] = 0.0                     # no bed seen: not a bedroom (wardrobes alone mislead)
+        try:
+            sc = scene_scores(rid, lab, grid, memory, floor)
+        except Exception:
+            sc = None
+        if sc:                                          # views: up to 4 points for a confident scene
+            for k, v in sc.items():
+                scores[k] = scores.get(k, 0.0) + 4.0 * v
         best = max(scores, key=scores.get) if scores else None
-        if best is None or scores[best] < 2.0:
+        if best is not None and best == "hallway" and scores[best] >= 2.0:
+            pass
+        elif best is None or scores[best] < 2.0:
             h, w = ii.max() - ii.min() + 1, jj.max() - jj.min() + 1
             elong = max(h, w) / max(1, min(h, w))
             best = "hallway" if elong > 3.0 or m.sum() * res * res < 6 else "room"

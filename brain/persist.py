@@ -21,7 +21,8 @@ def save_stack(stack, directory):
                              score=o.score, hits=o.hits, misses=o.misses, first_seen=o.first_seen,
                              last_seen=o.last_seen, room=o.room, crop=o.crop, votes=o.votes))
         with open(d / "memory.pkl", "wb") as f:
-            pickle.dump(dict(objects=objs, history=stack.memory.history, next_id=stack.memory.next_id), f)
+            pickle.dump(dict(objects=objs, history=stack.memory.history, next_id=stack.memory.next_id,
+                             keyframes=stack.memory.keyframes), f)
         (d / "memory.json").write_text(json.dumps(stack.memory.to_dict(), indent=1, ensure_ascii=False))
     if stack.scene is not None:
         stack.scene.save(d / "scene_graph.json")
@@ -52,6 +53,7 @@ def load_stack(directory, memory=True, guard=True):
                      o["room"], o["crop"], 0.0, dict(o["votes"]))
             mem.objects[ob.id] = ob
         mem.history, mem.next_id = m["history"], m["next_id"]
+        mem.keyframes = m.get("keyframes", [])
         stack.memory = mem
         stack.people = PeopleTracker()
     sg = SceneGraph()
