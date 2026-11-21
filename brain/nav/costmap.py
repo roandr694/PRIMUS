@@ -3,6 +3,9 @@
     static    SLAM grid of the tour (occupied = lethal, unknown = lethal beyond `unknown_ok` metres of the robot)
     live      lidar returns of the last seconds (with decay); cells seen free again and again clear a static
               obstacle (a chair that moved), cells hit block a free one (a bag on the floor)
+    camera    3-D voxel occupancy from the depth camera (brain.mapping.voxels): every column with something between
+              the wheels' step height and the robot's top is an obstacle (tables, chair legs, low shelves), kept in
+              the map like the static layer and carved away by the camera when the thing is gone
     terrain   height jumps in the elevation map (> 5 cm between neighbours: step, curb, drop edge) = lethal for
               driving; skills cross them through nav-graph edges, never through the costmap
     keepout   rectangles the owner forbids ("não entra no banheiro")
@@ -34,6 +37,8 @@ class Costmap:
         self.blocked = np.zeros((self.ny, self.nx), bool)              # navigator: corridors found impassable
         self.now = 0.0
         self.terrain_lethal_r = 2.0
+        self.voxels = None                                             # brain.mapping.voxels.VoxelMap (phase C)
+        self.robot_top = 0.65                                          # m above the floor (leg + body)
         self._cache = None
 
     def ij(self, xy):
@@ -151,6 +156,9 @@ class Costmap:
             dyn &= mask
         occ = (static_occ & ~moved) | dyn | self.keepout | self.blocked
         unk = unknown & ~recent_hit & (self.live_free < 2)
+        if self.voxels is not None:
+            occ |= self.voxels.columns(0.06, self.robot_top)
+            unk &= ~self.voxels.observed()
         if robot_xy is not None and self.unknown_ok > 0:
             i, j = self.ij(np.asarray(robot_xy))
             k = int(self.unknown_ok / self.res)

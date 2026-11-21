@@ -353,21 +353,30 @@ pipeline that does not fit is caught before the robot.
 | D4 | where the semantic tour is processed | **in sim on the desktop GPU; the real robot does everything on the Jetson + Pi** (so the sim uses the same models) |
 | D5 | where a payload goes (top tray vs lidar) | open: decide with the CAD before P5 on the real robot |
 
-## 11. Isaac Sim for camera fidelity (next)
+## 11. Camera-first perception and realistic houses in Isaac Sim (plan of 2026-11-20)
 
-MuJoCo renders are good enough to develop and test the geometry (maps, costmaps, navigation, fusion), but an
-open-vocabulary detector trained on photos does poorly on them: on the semantic tour 42 of 57 confirmed objects lie
-on a real object, yet only ~25 % carry the right class (armchair / sofa, floor lamp, kitchen counter called
-"wardrobe"). Isaac Sim's RTX renderer of the same house (`sim/isaac/usd/house/cma_house.usd`, generated from the
-same `Scene`) closes most of that gap. Plan, in order:
+The owner's review of the first implementation (§12): the lidar sits at the top of the robot and sees one plane,
+so anything lower that the robot can hit is invisible to it; the D435i sees in 3-D and must also build the semantic
+map. The camera therefore becomes the primary map sensor and the lidar assists it (long walls, 360°, fast and stable
+localisation). Pose comes from a filter, not from odometry corrected by one matcher. And the generated CMA house is
+too clean for detectors trained on photos (on the MuJoCo tour 42 of 57 objects lie on a real object, only ~25 %
+with the right class), so the tests move to ready-made realistic houses rendered by Isaac Sim's RTX camera.
 
-1. **Render-only co-simulation.** Physics, controller, policy and the brain stay in MuJoCo (validated); each camera
-   frame, the robot camera pose, the door / drawer joint positions and the person are mirrored into the Isaac stage
-   and the D435i colour + depth are rendered there (Replicator annotators), then handed to the brain exactly like
-   `HomeSim._rgbd()`. Isaac Sim 6.1 is already installed in the simulation environment.
-2. Re-run `eval_semantic.py` with the Isaac camera and compare object recall / precision and room naming.
-3. Later, if needed: the robot itself in Isaac (articulation from `sim/isaac/usd/robo_bipedal.usd`), for contact
-   and lighting effects on depth (glass, reflections, sun).
+Not everything is the house's fault: the P2 navigation failure (0.9 m dining gap, pivot-door channels) is geometry
+and control and would happen in a real house too, so it is fixed in parallel (phase E).
+
+| phase | content | done when |
+|---|---|---|
+| **A realistic houses** | compare 2-3 ready-made USD homes (GRScenes / InternUtopia, Infinigen Indoors, HSSD converted) on licence, collision quality, 12 GB GPU fit; ground truth (rooms, objects with class and box) generated from the scene's own labels | 2+ houses load in Isaac Sim 6.1 with collision and a `house_gt.json` each |
+| **B robot + sensors in Isaac** | robot in PhysX with the LQR in the loop (student-v1 optional: a sim-to-sim test of its own), RTX D435i (colour, depth with noise, IR stereo pair), IMU, RTX 2-D lidar; a bridge that feeds `brain/` the same messages as `HomeSim`. Fallback if the wheel-legged robot is not stable in PhysX: MuJoCo physics with the house's collision meshes converted, Isaac renders only | a scripted drive through a realistic house with the full brain stack, no fall |
+| **C camera 3-D map** | voxel occupancy map from depth (log-odds, 5 cm, GPU/NumPy; the same role nvblox plays on the Jetson); the 2-D costmap = everything between the floor and the robot's current height (it changes with the leg), plus lidar walls and 360°; semantic objects attached to the 3-D map and removed when the map shows them gone | table tops, chair legs and steps appear in the costmap with no lidar contribution; no collision with low furniture |
+| **D fused localisation** | EKF over wheel odometry, gyro (IMU), lidar scan-to-map matches and camera depth-to-voxel-map matches, each with its covariance; slip detected as disagreement between sources; visual-inertial odometry (PyCuVSLAM on the D435i IR pair + IMU) as an extra input if it runs; loop closure for the mapping tour | mapping tour mean pose error < 10 cm, max < 30 cm; localisation 2-5 cm as today |
+| **E tight spaces** | planner prefers wide corridors (clearance cost), door-channel alignment manoeuvre, guard corridor while turning in place | ≥ 8/10 random goals out of a furnished room, in MuJoCo and in Isaac |
+| **F evaluations in Isaac** | mapping, navigation, semantic memory and agent evaluations in the realistic houses, compared with MuJoCo | numbers in §12 per house |
+
+Then the LLM in 4-bit next to the vision models, and voice (P6). Risks: the 12 GB GPU may not hold Isaac rendering,
+the vision models and the LLM together (measure; run the LLM apart for navigation tests if needed); Isaac is
+slower than MuJoCo (longer tests); the robot's stability in PhysX is the least certain part (fallback above).
 
 ## 12. Implementation status (simulation)
 
@@ -382,11 +391,23 @@ same `Scene`) closes most of that gap. Plan, in order:
 | P4 agent | rules done, LLM tested offline | Portuguese intents cover the simple commands; 8/16 scripted requests succeed in the house (failures: the P2 limit, objects never detected); Qwen3-4B answers valid JSON in Portuguese in 0.5-0.9 s with few-shot examples; Qwen3-1.7B 0.3-0.7 s but answers partly in English; the in-house LLM run ran out of GPU memory next to the vision models (needs the 4-bit build, as on the Jetson) |
 | P5 behaviours | implemented, not scored | go_to, set_body, park/stand, stop, turn, cross (skills), follow (person tracker), find, carry mode (gentle limits, no skills), sequences |
 | P6 voice | not started | text chat page (`brain/ui/server.py`, `sim/home_sim/run_home.py`) is the entry point speech will use |
-| Isaac camera (§11) | not started | |
+| Isaac camera (§11) | see §12.1 | |
 
-Next, in order: P2 execution in tight furnished spaces (prefer wide corridors over the dining gap, door-channel
-alignment manoeuvre, guard corridor while turning), loop closure or a second mapping pass for long tours, the
-Isaac render bridge for detector fidelity, then the LLM in 4-bit next to the vision models and voice.
+### 12.1 Camera-first perception, EKF and realistic apartments (phases A-F of §11, 2026-11-21)
+
+| phase | state | measured |
+|---|---|---|
+| A realistic houses | done | 3 InteriorAgent apartments (72, 127, 169 m²; 8-14 rooms; 29-44 labelled objects) converted by `sim/apartments/convert.py` (voxel-box colliders, doors removed, ground truth from the scene's labels and room polygons); every evaluation takes `--world` |
+| B robot + sensors in Isaac | **co-simulation** (the fallback of §11) | MuJoCo keeps physics, controller, student-v1, lidar and the brain; Isaac renders the D435i (both streams) with RTX from the robot's camera pose (`sim/isaac_home/`): 31 ms per depth frame, 39 ms per colour frame, depth within 3 cm of MuJoCo's. The robot itself in PhysX was not attempted: the controller and the policy are validated in MuJoCo, and the camera, which was the fidelity problem, is now rendered by Isaac |
+| C camera 3-D map | works | `brain/mapping/voxels.py`: log-odds voxels (5 cm x 5 cm x 10 cm, int8) from every depth frame, carved by free rays; the costmap takes every column with something between 6 cm and the robot's top. On the apartment tour it shows the dining chairs, coffee table, bed and desk the lidar misses. The voxel map is saved with the house. Room segmentation now uses lidar + camera free space |
+| D fused localisation | works (lidar measurements) | EKF over (x, y, heading, gyro bias), lidar matches with the covariance of their score surface, gating + slip recovery. CMA social tour, same run: mean pose error **6.1 cm, max 23 cm** (previous corrector 29.7 cm / 2.47 m), map precision 93 % (67 %); apartment tour 1.5 cm mean. Camera depth-to-voxel matches are implemented but off by default: with a voxel map built live they bias the pose (self-matching), and on the apartment they gave no gain and more collisions. Loop closure not done |
+| E tight spaces | partial | narrow-passage mode (line up before a passage, 0.18 m/s, short lookahead, guard corridor 0.31 m, back off and retry three times); owner's voice-note positions seed rooms and a watershed puts room borders at doorways (apartment rooms named 5-6/8, was 2/8). Fixed an old navigator bug: after a failed plan it reported "arrived" (earlier navigation numbers may contain false arrivals). Apartment kujiale_0026: **5/5 reachable goals** with and without the camera layer (0.11-0.17 m), the other 5 random goals fall on a balcony the tour mapped badly. CMA house: still 2/10 without the camera layer; with a camera layer built live (the old CMA map has none) 0/10: the robot stalls among the living-room furniture and the stall marks close the way. **Still the main open problem** |
+| F evaluations | done for kujiale_0026 | semantic tour with the Isaac camera: object recall **48 %** (0 % with MuJoCo renders of the same apartment), precision 24 % (30 % on the classes the ground truth labels; many false "wardrobe" on white walls, per-class thresholds added after this run, not yet re-measured); agent with the Isaac camera: **11/16** Portuguese requests (failures: kitchen and bathroom not yet labelled because the tour pilot did not reach them, dining table never detected, office route blocked) |
+
+Next, in order: the CMA living-room stall (decaying stall marks, wider-corridor preference, recover by backing out
+of the furniture cluster), re-run the semantic tour with the per-class thresholds and the full tour of the larger
+apartments (kujiale_0003, kujiale_0004), loop closure, then the LLM in 4-bit next to the vision models and voice.
+The person (follow-me) and the RTX lidar are not mirrored in Isaac yet.
 
 ## References
 

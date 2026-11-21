@@ -134,5 +134,58 @@ class TestIntents(unittest.TestCase):
         self.assertIsNone(parse("conta uma piada"))
 
 
+class TestVoxels(unittest.TestCase):
+    def test_floor_is_not_an_obstacle_and_carving(self):
+        from brain.mapping.voxels import VoxelMap
+        g = Grid((0, 4, 0, 4))
+        v = VoxelMap(g, 0.0)
+        rng = np.random.default_rng(0)
+        o = np.array([0.2, 2.0, 0.42])
+        floor = np.stack([np.linspace(0.6, 3.0, 200), np.full(200, 2.0), rng.normal(0, 0.02, 200)], 1)
+        chair = np.array([[2.0, 2.0, 0.42]] * 4)
+        for _ in range(3):
+            v.integrate(o, np.concatenate([floor, chair]))
+        self.assertEqual(np.argwhere(v.columns(0.06, 0.75)).tolist(), [[40, 40]])
+        wall = np.array([[2.9, 2.0, 0.42]] * 4)                 # the chair left: rays now pass through it
+        for _ in range(8):
+            v.integrate(o, wall)
+        self.assertEqual(np.argwhere(v.columns(0.06, 0.75)).tolist(), [[40, 57]])
+
+
+class TestEKF(unittest.TestCase):
+    def test_corrects_towards_measurement_by_covariance(self):
+        from brain.mapping.slam import FloorSLAM
+        s = FloorSLAM(mapping=False)
+        st = link.State(stamp=0.0, x=0.0, y=0.0, z=0.4, yaw=-math.pi / 2, mode=2, leg_length=0.3)
+        s.on_state(st)
+        s.set_pose(0.0, 0.0, 0.0, std=(0.10, 0.02))
+        # a corridor-like measurement: sharp across y, loose along x
+        ok = s.measure((0.3, 0.05, 0.0), np.diag([0.5 ** 2, 0.01 ** 2, 0.01 ** 2]))
+        self.assertTrue(ok)
+        x, y, _ = s.pose()
+        self.assertLess(abs(x), 0.05)                           # hardly moved along the corridor
+        self.assertGreater(y, 0.045)                            # moved almost fully across it
+        self.assertFalse(s.measure((3.0, 3.0, 0.0), np.diag([0.01 ** 2] * 3)))     # far outlier: gated
+
+
+class TestWatershedRooms(unittest.TestCase):
+    def test_owner_label_seeds_a_small_room(self):
+        g = Grid((0, 6, 0, 3))
+        occ = np.zeros((g.ny, g.nx), bool)
+        occ[:2, :] = occ[-2:, :] = occ[:, :2] = occ[:, -2:] = True
+        occ[:, 78:80] = True                                    # wall at x = 3.9
+        occ[25:41, 78:80] = False                               # 0.8 m door
+        occ[:, 98:100] = True                                   # a 1 m wide closet behind a second door
+        occ[25:41, 98:100] = False
+        g.L[:] = np.where(occ, 3.0, -2.5)
+        plain = R.segment_rooms(g)
+        lab = R.segment_rooms(g, label_xy=[(5.45, 1.5)])
+        a = R.room_at(lab, g, (1.5, 1.5))
+        c = R.room_at(lab, g, (5.45, 1.5))
+        self.assertTrue(a and c)
+        self.assertNotEqual(a, c)                                # the closet is a room of its own ...
+        self.assertGreaterEqual(lab.max(), plain.max())        # ... and labels never remove rooms
+
+
 if __name__ == "__main__":
     unittest.main()

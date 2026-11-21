@@ -22,7 +22,6 @@ from brain.nav.follower import PathFollower  # noqa: E402
 from brain.runtime import PilotInput  # noqa: E402
 
 import gt_grid  # noqa: E402
-from world import GT_PATH  # noqa: E402
 
 
 def cost_from_free(free, res, robot_r=0.33, soft=0.85):
@@ -32,14 +31,29 @@ def cost_from_free(free, res, robot_r=0.33, soft=0.85):
     return c.astype(np.float64)
 
 
-def room_waypoints(gt, grid, floor, min_clear=0.45, indoor_only=True):
+def room_waypoints(gt, grid, floor, min_clear=0.45, indoor_only=True, world=None, start=None, robot_r=0.30):
     """One waypoint per room of the floor: the free cell with the largest clearance inside the room. Outdoor rooms
     are skipped by default (lawn and garden foliage is visual-only in the scene: the ground truth calls it free,
     the robot's camera and lidar see it as obstacles)."""
     clear = grid.clearance()
+    if start is not None:                       # only cells the robot can reach from the start (a shower or a
+        lab, _ = ndimage.label(clear > robot_r)   # balcony behind furniture is not a waypoint)
+        i, j = grid.world_to_ij(np.asarray(start))
+        comp = lab[i, j]
+        if comp > 0:
+            clear = np.where(lab == comp, clear, 0.0)
     pts = []
     for r in gt["rooms"]:
         if r["floor"] != floor or (indoor_only and not r["indoor"]):
+            continue
+        if "polygon" in r:                                      # apartments: room polygons
+            ii, jj = np.mgrid[0:grid.free.shape[0], 0:grid.free.shape[1]]
+            P = grid.ij_to_world(ii, jj)
+            msk = world.room_mask(r, P[..., 0], P[..., 1])
+            c = np.where(msk, clear, 0.0)
+            k = np.unravel_index(np.argmax(c), c.shape)
+            if c[k] >= min_clear:
+                pts.append((r["name"], grid.ij_to_world(k[0], k[1])))
             continue
         best = None
         for x0, x1, y0, y1 in r["rects"]:
@@ -59,11 +73,13 @@ def room_waypoints(gt, grid, floor, min_clear=0.45, indoor_only=True):
 
 
 class TourDriver:
-    def __init__(self, sim, floor="social", order=None, v_max=0.5, leg=0.30, dwell=1.5, spin=True):
-        self.gt = json.loads(GT_PATH.read_text())
-        self.grid = gt_grid.cached(sim.m, sim.d, floor, GT_PATH.parent)
-        self.cost = cost_from_free(self.grid.free, self.grid.res)
-        wps = room_waypoints(self.gt, self.grid, floor)
+    def __init__(self, sim, floor=None, order=None, v_max=0.5, leg=0.30, dwell=1.5, spin=True, guard_off=None):
+        self.guard_off = (sim.w.name != "cma") if guard_off is None else guard_off
+        floor = floor or sim.w.default_floor
+        self.gt = sim.gt
+        self.grid = sim.gt_grid(floor)
+        self.cost = cost_from_free(self.grid.free, self.grid.res, robot_r=0.30)
+        wps = room_waypoints(self.gt, self.grid, floor, world=sim.w, start=sim.truth().xy)
         if order:
             wps = sorted([w for w in wps if w[0] in order], key=lambda w: order.index(w[0]))
         self.wps, self.v_max, self.leg, self.dwell, self.spin = wps, v_max, leg, dwell, spin
@@ -73,6 +89,12 @@ class TourDriver:
 
     def start(self, sim, brain):
         self.sim, self.k, self.phase, self.t_phase = sim, -1, "wait", 0.0
+        # the owner drives through doors by hand with the edge guard off (Back on the gamepad): in 0.8 m doors
+        # the guard's corridor otherwise holds the robot at every jamb. The pilot follows the true pose.
+        if getattr(brain, "auto", None) is not None:
+            brain.auto.corridor_half_width = 0.31
+            if self.guard_off:
+                brain.auto.plan.guard_on = False
         self.remaining = self._order(sim.truth().xy)
 
     def _order(self, start):

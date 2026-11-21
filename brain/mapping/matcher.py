@@ -50,7 +50,9 @@ def score_at(grid, pts, pose, sigma=0.08, max_pts=180):
                               np.array([pose[2]]))[0, 0, 0])
 
 
-def match(grid, pts, guess, win_xy=0.3, win_th=0.12, sigma=0.08, max_pts=180, prior=0.02):
+def match(grid, pts, guess, win_xy=0.3, win_th=0.12, sigma=0.08, max_pts=180, prior=0.02, cov=False, tau=0.004):
+    """-> (pose, score) or, with cov=True, (pose, score, 3x3 covariance from the fine score surface: weights
+    exp((S - Smax) / tau), so a corridor gives a long ellipse along it and a corner a small round one)."""
     lf = grid.likelihood_field(sigma)
     if len(pts) > max_pts:                                        # subsample the scan evenly
         pts = pts[np.linspace(0, len(pts) - 1, max_pts).astype(int)]
@@ -70,7 +72,19 @@ def match(grid, pts, guess, win_xy=0.3, win_th=0.12, sigma=0.08, max_pts=180, pr
         k, i, j = np.unravel_index(np.argmax(S2), S2.shape)
         best = (float(xs[j]), float(ys[i]), float(ths[k]))
         score = float(S[k, i, j])
-    return best, score
+        if step_xy == 0.05:
+            coarse = (S, xs, ys, ths)
+    if not cov:
+        return best, score
+    S, xs, ys, ths = coarse                                       # the whole search window
+    w = np.exp((S - S.max()) / tau).astype(np.float64)
+    w /= w.sum()
+    TH, Y, X = np.meshgrid(ths, ys, xs, indexing="ij")
+    D = np.stack([X - best[0], Y - best[1], TH - best[2]], -1).reshape(-1, 3)
+    C = (D * w.reshape(-1, 1)).T @ D
+    # the window's own resolution and the matcher's bias floor the uncertainty
+    C += np.diag([0.012 ** 2, 0.012 ** 2, 0.004 ** 2])
+    return best, score, C
 
 
 def global_search(grid, pts, free_mask_xy, th_step=math.radians(5), max_pts=90, top=5):

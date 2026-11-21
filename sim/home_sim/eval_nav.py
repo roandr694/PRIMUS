@@ -20,7 +20,7 @@ sys.path.insert(0, str(HERE.parents[1]))
 from brain import persist  # noqa: E402
 from runner import Scenario, run_stack  # noqa: E402
 import gt_grid  # noqa: E402
-from world import GT_PATH, HomeSim  # noqa: E402
+from world import HomeSim  # noqa: E402
 
 
 class GoalTask:
@@ -67,17 +67,31 @@ class GoalTask:
         return dict(goals=self.results)
 
 
-def random_goals(sim, floor, n, seed, min_clear=0.5):
-    gt = json.loads(GT_PATH.read_text())
-    grid = gt_grid.cached(sim.m, sim.d, floor, GT_PATH.parent)
+def random_goals(sim, floor, n, seed, min_clear=0.5, reachable=False):
+    gt = sim.gt
+    grid = sim.gt_grid(floor)
     clear = grid.clearance()
+    if reachable:                     # only goals the robot can reach from its start (closed balconies, showers)
+        from scipy import ndimage
+        lab, _ = ndimage.label(clear > 0.30)
+        i, j = grid.world_to_ij(sim.truth().xy)
+        clear = np.where(lab == lab[i, j], clear, 0.0) if lab[i, j] > 0 else clear
     rng = np.random.default_rng(seed)
     rooms = [r for r in gt["rooms"] if r["floor"] == floor and r["indoor"]]
     out = []
-    while len(out) < n:
+    tries = 0
+    while len(out) < n and tries < 100000:
+        tries += 1
         r = rooms[rng.integers(len(rooms))]
-        x0, x1, y0, y1 = r["rects"][0]
+        if "polygon" in r:
+            P = np.asarray(r["polygon"])
+            x0, y0 = P.min(0)
+            x1, y1 = P.max(0)
+        else:
+            x0, x1, y0, y1 = r["rects"][0]
         xy = np.array([rng.uniform(x0, x1), rng.uniform(y0, y1)])
+        if sim.w.room_at(xy[0], xy[1], gt["floors"][floor]) != r["name"]:
+            continue
         i, j = grid.world_to_ij(xy)
         if grid.inside(i, j) and clear[i, j] >= min_clear:
             out.append((r["name"], xy))
@@ -87,16 +101,28 @@ def random_goals(sim, floor, n, seed, min_clear=0.5):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--map", default=str(HERE.parents[1] / "sim/models/house/robot_map_sem"))
-    ap.add_argument("--floor", default="social")
+    ap.add_argument("--world", default="cma")
+    ap.add_argument("--floor", default=None)
     ap.add_argument("--spawn", default="home")
     ap.add_argument("--goals", type=int, default=20)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--video", default=None)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--no-voxels", action="store_true", help="lidar-only costmap (the first implementation)")
+    ap.add_argument("--no-ekf", action="store_true")
+    ap.add_argument("--camera-match", action="store_true", help="camera depth-to-voxel matches in the EKF")
     a = ap.parse_args()
-    sim = HomeSim(spawn=a.spawn)
-    goals = random_goals(sim, a.floor, a.goals, a.seed)
+    sim = HomeSim(spawn=a.spawn, world=a.world)
+    a.floor = a.floor or sim.w.default_floor
+    goals = random_goals(sim, a.floor, a.goals, a.seed, reachable=a.world != "cma")
     stack = persist.load_stack(a.map, memory=False)          # floor maps + the camera layer of the tour
+    if a.no_voxels:
+        stack.use_voxels = False
+        stack.voxels.clear()
+        for cm in stack.costmaps.values():
+            cm.voxels = None
+    stack.slam.ekf = not a.no_ekf
+    stack.camera_match = a.camera_match
     tp = sim.truth()
     stack.on_state(sim.step().state)
     stack.slam.set_pose(tp.p[0], tp.p[1], tp.yaw + math.pi / 2)      # known start (relocalisation: eval_reloc)

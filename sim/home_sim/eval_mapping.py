@@ -72,16 +72,19 @@ def score_map(slam, floor_id, gt):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--floor", default="social")
+    ap.add_argument("--world", default="cma")
+    ap.add_argument("--floor", default=None)
     ap.add_argument("--spawn", default="home")
     ap.add_argument("--rooms", nargs="*", default=None)
     ap.add_argument("--save-map", default=None)
+    ap.add_argument("--no-ekf", action="store_true", help="the earlier gain / dead-band corrector")
     ap.add_argument("--png", default=None)
     ap.add_argument("--video", default=None)
     ap.add_argument("--timeout", type=float, default=900.0)
     a = ap.parse_args()
-    sim = HomeSim(spawn=a.spawn)
-    slam = FloorSLAM(mapping=True)
+    sim = HomeSim(spawn=a.spawn, world=a.world)
+    a.floor = a.floor or sim.w.default_floor
+    slam = FloorSLAM(mapping=True, ekf=not a.no_ekf)
     brain = Brain(slam=slam)
     drv = PoseLogger(TourDriver(sim, a.floor, order=a.rooms), brain, sim)
     res, sim = run(Scenario(f"tour {a.floor}", spawn=a.spawn, timeout=a.timeout), drv, sim=sim, brain=brain,
@@ -94,9 +97,7 @@ def main():
     print(f"pose error: mean {err.mean() * 100:.1f} cm, max {err.max() * 100:.1f} cm, heading max "
           f"{math.degrees(eth.max()):.1f} deg; raw odometry error at the end {odo[-1] * 100:.1f} cm (max {odo.max() * 100:.1f})")
     print("slam stats:", slam.stats, "floors:", {k: (f.z, f.n_scans) for k, f in slam.floors.items()})
-    import gt_grid
-    from world import GT_PATH
-    gt = gt_grid.cached(sim.m, sim.d, a.floor, GT_PATH.parent)
+    gt = sim.gt_grid(a.floor)
     fid = min(slam.floors, key=lambda k: abs(slam.floors[k].z - gt.floor_z))
     prec, cov = score_map(slam, fid, gt)
     print(f"map: precision {prec * 100:.1f} % (occupied cells within 10 cm of a real obstacle), "

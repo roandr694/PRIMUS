@@ -12,6 +12,14 @@ started (or an existing one re-entered) once it has been at a new height for 1 s
 Scans are projected with the full 3-D body pose and only returns 0.12-1.9 m above the floor are kept, so the
 planner's look-down pitch (up to -18 deg) still gives usable scans; beyond 20 deg of tilt they are dropped.
 Floor heights are ground heights (base z minus the leg and the wheel radius), not base heights.
+
+Pose fusion (ekf=True, phase D): an extended Kalman filter over (x, y, heading, gyro bias) in the map frame. The
+Pi's wheel-inertial odometry drives the prediction (noise grows with the distance and the turn), scan-to-map
+matches of the lidar and depth-to-voxel matches of the camera (stack) are measurements with the covariance of
+their score surface, so a corridor corrects across it but hardly along it. A match that disagrees with the
+prediction far beyond its covariance is rejected, unless it scores clearly better than the prediction (a wheel
+slip): then the prediction's covariance is inflated and the match wins. ekf=False keeps the earlier gain /
+dead-band corrector for comparison.
 """
 import json
 import math
@@ -65,7 +73,7 @@ class Transform2D:
 class FloorSLAM:
     def __init__(self, mapping=True, extent=(-40.0, 55.0, -15.0, 30.0), res=0.05, max_tilt_deg=20.0,
                  min_score=0.30, floor_gap=1.2, gain=0.35, gain_th=0.05, deadband=0.03,
-                 deadband_th=0.01, slip_margin=0.12):
+                 deadband_th=0.01, slip_margin=0.12, ekf=True):
         self.mapping, self.extent, self.res, self.gain, self.gain_th = mapping, extent, res, gain, gain_th
         self.deadband, self.deadband_th, self.slip_margin = deadband, deadband_th, slip_margin
         self.max_tilt, self.min_score, self.floor_gap = math.radians(max_tilt_deg), min_score, floor_gap
@@ -79,7 +87,12 @@ class FloorSLAM:
         self.bad = 0
         self.score = 0.0
         self.lost = False
-        self.stats = dict(scans=0, matched=0, rejected=0, tilted=0, transit=0, relocalised=0)
+        self.stats = dict(scans=0, matched=0, rejected=0, tilted=0, transit=0, relocalised=0, outliers=0)
+        self.ekf = ekf
+        self.P = np.diag([0.02 ** 2, 0.02 ** 2, 0.01 ** 2, 2e-4 ** 2])    # x, y, heading, gyro bias [rad/s]
+        self.bias = 0.0
+        self._prev_odom = None
+        self.n_out = 0                                                    # consecutive gated matches
 
     # ------------------------------------------------------------------------------------------------ inputs
     @staticmethod
@@ -89,6 +102,8 @@ class FloorSLAM:
     def on_state(self, state):
         prev = self.state
         self.state = state
+        if self.ekf:
+            self._predict(prev, state)
         z = self.ground_z(state)
         if self.floor is None:
             self._enter_floor(z)
@@ -114,6 +129,58 @@ class FloorSLAM:
             self.floors[fid] = Floor(fid, round(float(z), 2), Grid(self.extent, self.res))
             self.floor = fid
         self.settle, self.pending_z, self.last_integrated = 0.0, None, None
+
+    # ------------------------------------------------------------------------------------------------ EKF
+    def _predict(self, prev, state):
+        od = self.odom_pose()
+        if prev is None or self._prev_odom is None:
+            self._prev_odom = od
+            return
+        dt = max(state.stamp - prev.stamp, 0.0)
+        po = self._prev_odom
+        self._prev_odom = od
+        ds = math.hypot(od[0] - po[0], od[1] - po[1])
+        dth = wrap(od[2] - po[2])
+        x, y, th = self.T.apply(*od)
+        if dt > 0 and self.bias != 0.0:                          # remove the estimated gyro bias from the heading
+            th = wrap(th - self.bias * dt)
+            self.T = Transform2D.between(od, (x, y, th))
+        F = np.eye(4)
+        F[0, 2] = -ds * math.sin(th)
+        F[1, 2] = ds * math.cos(th)
+        F[2, 3] = -dt
+        q_xy = (0.03 * ds) ** 2 + (2e-4) ** 2 * (dt / 0.02)
+        q_th = (0.02 * abs(dth)) ** 2 + (3e-4) ** 2 * (dt / 0.02)
+        Q = np.diag([q_xy, q_xy, q_th, (4e-5) ** 2 * dt])
+        self.P = F @ self.P @ F.T + Q
+
+    def measure(self, z, R, slip=False, gate=25.0, kind="lidar"):
+        """Fuse a map-frame pose measurement z = (x, y, th) with covariance R (3x3). Returns True if accepted."""
+        od = self.odom_pose()
+        guess = self.T.apply(*od)
+        nu = np.array([z[0] - guess[0], z[1] - guess[1], wrap(z[2] - guess[2])])
+        if slip:
+            self.P[:3, :3] += np.diag([0.25 ** 2, 0.25 ** 2, 0.08 ** 2])
+        H = np.zeros((3, 4))
+        H[:, :3] = np.eye(3)
+        Sm = H @ self.P @ H.T + R
+        Si = np.linalg.inv(Sm)
+        d2 = float(nu @ Si @ nu)
+        if d2 > gate and not slip:
+            self.stats["outliers"] += 1
+            self.stats[f"{kind}_outliers"] = self.stats.get(f"{kind}_outliers", 0) + 1
+            return False
+        K = self.P @ H.T @ Si
+        dx = K @ nu
+        self.P = (np.eye(4) - K @ H) @ self.P
+        self.P = 0.5 * (self.P + self.P.T)
+        self.bias += float(dx[3])
+        self.T = Transform2D.between(od, (guess[0] + dx[0], guess[1] + dx[1], wrap(guess[2] + dx[2])))
+        self.stats[f"{kind}_fused"] = self.stats.get(f"{kind}_fused", 0) + 1
+        return True
+
+    def pose_std(self):
+        return float(math.sqrt(max(self.P[0, 0], self.P[1, 1]))), float(math.sqrt(self.P[2, 2]))
 
     def odom_pose(self):
         s = self.state
@@ -152,10 +219,28 @@ class FloorSLAM:
         mp = guess
         if floor.grid.occupied().sum() > 200:
             win = 0.6 if self.lost else 0.3
-            mp, score = match(floor.grid, local, guess, win_xy=win, win_th=0.15 if not self.lost else 0.3,
-                              prior=0.0 if self.lost else 0.08)
+            mp, score, C = match(floor.grid, local, guess, win_xy=win, win_th=0.15 if not self.lost else 0.3,
+                                 prior=0.0 if self.lost else 0.08, cov=True)
             self.score = score
-            if score >= self.min_score:
+            if score >= self.min_score and self.ekf and not self.lost:
+                slip = score - score_at(floor.grid, local, guess) > self.slip_margin
+                # good matches rejected again and again: the prediction is what is wrong (a push, a collision)
+                slip = slip or self.n_out >= 4
+                if slip:
+                    self.stats["slips"] = self.stats.get("slips", 0) + 1
+                ok = self.measure(mp, C * 1.5, slip=slip)
+                self.stats["matched" if ok else "rejected"] += 1
+                if not ok:
+                    self.n_out += 1
+                    self.bad += 1
+                    if self.bad > 15 and not self.mapping:
+                        self.lost = True
+                        self.relocalise(local, (ox, oy, oth))
+                    return
+                self.n_out = 0
+                mp = self.T.apply(ox, oy, oth)
+                self.bad = 0
+            elif score >= self.min_score:
                 # odometry over one scan period is good to ~1 cm: move only part of the way to the match
                 # heading: the gyro drifts slowly, scan headings are noisy -> a much lower gain
                 # dead band: matches within the matcher's own bias (~1-2 cm, ~0.3 deg in sim) are noise; only the
@@ -210,14 +295,16 @@ class FloorSLAM:
             s, x, y, th = best[0]
             self.T = Transform2D.between(odom, (x, y, th))
             self.lost, self.bad = False, 0
+            self.P[:3, :3] = np.diag([0.1 ** 2, 0.1 ** 2, 0.05 ** 2])
             self.stats["relocalised"] += 1
             return True
         return False
 
-    def set_pose(self, x, y, th):
+    def set_pose(self, x, y, th, std=(0.02, 0.01)):
         """Tell the localiser where the robot is (map frame), e.g. from a known start or a user hint."""
         self.T = Transform2D.between(self.odom_pose(), (x, y, th))
         self.lost, self.bad = False, 0
+        self.P[:3, :3] = np.diag([std[0] ** 2, std[0] ** 2, std[1] ** 2])
 
     # ------------------------------------------------------------------------------------------------ io
     def save(self, directory):

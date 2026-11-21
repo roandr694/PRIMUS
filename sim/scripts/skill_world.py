@@ -128,6 +128,9 @@ class SkillWorld:
         else:
             self.ter = None
             path = {"flat": rm.FLAT_MODEL_PATH, "house": rm.HOUSE_MODEL_PATH}.get(scene, rm.MODEL_PATH)
+            if str(scene).endswith(".xml"):                        # any generated scene (sim/apartments)
+                from pathlib import Path as _P
+                path = _P(scene)
             if not path.exists():
                 raise FileNotFoundError(f"{path} not found: build it with `python3 house/build.py` (from sim/)")
             spec = mujoco.MjSpec.from_file(str(path))
@@ -159,7 +162,7 @@ class SkillWorld:
                 mujoco.mj_resetData(self.model, d)
                 d.qpos[:] = M.parked_qpos()
                 mujoco.mj_forward(self.model, d)
-            elif self.scene == "house":
+            elif self.scene == "house" or str(self.scene).endswith(".xml"):
                 rm.reset_to_key(mujoco, self.model, d, self.spawn)
             else:
                 rm.reset(mujoco, self.model, d)

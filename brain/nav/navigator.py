@@ -8,6 +8,12 @@
 Replanning: every `replan_s`, when the path crosses a newly lethal cell, or when progress stalls. A stall marks the
 spot ahead as blocked for a while and plans around it; three failed plans in a row end the goal as "blocked"
 (the agent then asks for help, e.g. to open a door).
+
+Narrow passages (doorways, gaps between furniture narrower than ~1 m; phase E): the robot is 0.58 m wide and the
+edge guard watches a 0.70 m corridor, so in a 0.8 m door it must be centred and straight. Before the passage it
+stops and turns to the passage direction, drives through slowly with a short lookahead and a guard corridor
+narrowed to the robot's width plus 2 cm a side, and if the guard still holds it, it backs off, lines up again and
+retries (three times) before it marks the passage blocked and plans another way.
 """
 import math
 import time
@@ -29,7 +35,13 @@ class Navigator:
         self.follower = PathFollower(v_max=v_max)
         self.status, self.goal, self.path = "idle", None, None
         self.message = ""
-        self.stats = dict(plans=0, replans=0, stalls=0, plan_ms=0.0)
+        self.stats = dict(plans=0, replans=0, stalls=0, plan_ms=0.0, aligns=0, retries=0)
+        self.narrow_clear = 0.50                # passage half-width below which the narrow-passage mode starts
+        self.clear_snapshot = None
+        self.passage = None                     # (point, direction) of the next narrow passage
+        self.aligned_for = None
+        self.retries = 0
+        self.backoff_until = 0.0
 
     # ------------------------------------------------------------------------------------------------ goals
     def go_to(self, xy, heading=None, tol=0.20, v_max=None, leg=None, label=""):
@@ -43,6 +55,7 @@ class Navigator:
         self.t_plan = -1e9
         self.t_progress, self.best_rem = None, math.inf
         self.recover_until = 0.0
+        self.aligned_for, self.retries, self.backoff_until = None, 0, 0.0
         self.cm.clear_blocked()
 
     def cancel(self):
@@ -93,7 +106,39 @@ class Navigator:
         path = simplify(path, cost)
         pts = self.cm.xy(np.array([p[0] for p in path]), np.array([p[1] for p in path]))
         self.cost_snapshot = cost
+        from scipy import ndimage
+        occ, _ = self.cm.lethal((x, y), layers, near)
+        self.clear_snapshot = ndimage.distance_transform_edt(~occ) * self.cm.res
         return pts, ""
+
+    def _next_passage(self, x, y, horizon=1.4):
+        """First point within `horizon` metres along the path whose clearance is below narrow_clear, with the
+        path direction there: (point, direction angle, distance along the path) or None."""
+        cl = self.clear_snapshot
+        if cl is None or self.path is None:
+            return None
+        k0 = max(self.follower.progress, 0)
+        P = [np.array([x, y])] + [np.asarray(p, float) for p in self.path[k0 + 1:]]
+        travelled = 0.0
+        for a, b in zip(P[:-1], P[1:]):
+            L = float(np.linalg.norm(b - a))
+            if L < 1e-6:
+                continue
+            n = int(L / (0.5 * self.cm.res)) + 2
+            s = np.linspace(0, 1, n)
+            Q = a + (b - a) * s[:, None]
+            i, j = self.cm.ij(Q)
+            ok = self.cm.g.inside(i, j)
+            c = np.where(ok, cl[np.clip(i, 0, self.cm.ny - 1), np.clip(j, 0, self.cm.nx - 1)], 9.0)
+            d_along = travelled + s * L
+            hit = (c < self.narrow_clear) & (d_along > 0.15)
+            if hit.any():
+                m = int(np.argmax(hit))
+                return Q[m], math.atan2(b[1] - a[1], b[0] - a[0]), float(d_along[m])
+            travelled += L
+            if travelled > horizon:
+                break
+        return None
 
     def _route_cost(self, pts, start):
         """Cost of driving from start along pts on the latest cost grid (inf if it crosses a forbidden cell)."""
@@ -187,8 +232,41 @@ class Navigator:
             self.status = "driving"
             if self.t_progress is None:
                 self.t_progress = now
-        # narrow places (doorways, between furniture): short lookahead and slow, so the path is tracked closely
+        if self.path is None:                             # no plan yet (or the last one failed): wait, never "arrive"
+            return idle
+        # narrow passage ahead: stop and line up with it first, then go through slowly with a narrow guard corridor
         f = self.follower
+        auto = getattr(self.brain, "auto", None)
+        if now < self.backoff_until:
+            return PilotInput(speed=-0.15, leg_length=self.leg, source="nav")
+        nxt = self._next_passage(x, y)
+        in_narrow = False
+        if nxt is not None:
+            p_n, dir_n, d_n = nxt
+            key = (round(float(p_n[0]), 1), round(float(p_n[1]), 1))
+            err = wrap(dir_n - th)
+            if d_n < 1.0:
+                in_narrow = True
+                if self.aligned_for != key and abs(err) > math.radians(6):
+                    if abs(err) < math.radians(100):
+                        self.message = "nav: lining up with the passage"
+                        self.t_progress = now
+                        if auto is not None:
+                            auto.corridor_half_width = 0.35
+                        return PilotInput(speed=0.0, yaw_rate=float(np.clip(2.0 * err, -0.8, 0.8)),
+                                          leg_length=self.leg, source="nav")
+                if self.aligned_for != key:
+                    self.aligned_for = key
+                    self.stats["aligns"] += 1
+        else:
+            cl = self.clear_snapshot
+            if cl is not None:
+                i, j = self.cm.ij(np.array([x, y]))
+                if self.cm.g.inside(i, j) and cl[i, j] < self.narrow_clear:
+                    in_narrow = True                      # inside the passage now
+        if auto is not None:
+            auto.corridor_half_width = 0.31 if in_narrow else 0.35
+        # narrow places (doorways, between furniture): short lookahead and slow, so the path is tracked closely
         cs = getattr(self, "cost_snapshot", None)
         if cs is not None:
             i, j = self.cm.ij(np.array([x, y]))
@@ -197,8 +275,8 @@ class Navigator:
             tight = (not np.isfinite(local).all()) or float(np.nanmax(np.where(np.isfinite(local), local, np.nan))) > 6.0
         else:
             tight = False
-        f.L = 0.30 if tight else 0.55
-        v_cap = 0.30 if tight else None
+        f.L = 0.25 if in_narrow else (0.30 if tight else 0.55)
+        v_cap = 0.18 if in_narrow else (0.30 if tight else None)
         v, w = f.step((x, y, th))
         if v_cap is not None:
             v = min(v, v_cap)
@@ -216,6 +294,15 @@ class Navigator:
                 f.L = 0.25
                 v2, w2 = f.step((x, y, th))
                 return PilotInput(speed=0.0, yaw_rate=w2, leg_length=self.leg, source="nav")
+            elif in_narrow and self.retries < 3:
+                # a doorway: back off, line up again and retry before calling it blocked
+                self.retries += 1
+                self.stats["retries"] += 1
+                self.aligned_for, self.guard_on = None, False
+                self.backoff_until = now + 1.5
+                self.t_progress = now + 1.5
+                self.message = f"nav: tight passage, backing off to line up again ({self.retries})"
+                return PilotInput(speed=-0.15, leg_length=self.leg, source="nav")
             else:
                 ahead = np.array([x + 0.6 * math.cos(th), y + 0.6 * math.sin(th)])
                 self.cm.block_disk(ahead, 0.25)
@@ -227,6 +314,8 @@ class Navigator:
         rem = self.follower.remaining
         if rem < self.best_rem - 0.15:
             self.best_rem, self.t_progress = rem, now
+            if not in_narrow:
+                self.retries = 0
         elif self.follower.turning_final:
             self.t_progress = now
         elif now - self.t_progress > self.stall_s:        # no progress: something the map does not explain

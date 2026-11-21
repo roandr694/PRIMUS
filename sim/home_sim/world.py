@@ -23,7 +23,7 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 PRIMUS = HERE.parents[1]
-for p in (PRIMUS, PRIMUS / "sim" / "scripts", PRIMUS / "sim" / "house", PRIMUS / "robot", PRIMUS / "control"):
+for p in (HERE, PRIMUS, PRIMUS / "sim" / "scripts", PRIMUS / "sim" / "house", PRIMUS / "robot", PRIMUS / "control"):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
@@ -37,14 +37,11 @@ from repo_control_policy import RepoControlPolicy, RobotCommand  # noqa: E402
 
 EXPERIMENTS = PRIMUS.parent / "experiments"
 STUDENT_V1 = EXPERIMENTS / "2026-11-19_16-46-41-student-v1" / "exported"
-GT_PATH = PRIMUS / "sim" / "models" / "house" / "house_gt.json"
+GT_PATH = PRIMUS / "sim" / "models" / "house" / "house_gt.json"      # CMA house; other worlds: HomeSim.gt_dir
 
 DT_CTRL = 0.02
 
-# hinged doors of the house (structure.py door()); the photos' keyframe has most of them closed
-HOUSE_DOORS = ("kitchen_door_w", "kitchen_door_e", "service_entry", "cellar_pivot", "lavabo_door", "staffbath_door",
-               "pantry_cellar_door", "master_door", "suite3_door", "suite2_door", "master_bath_door",
-               "suite2_bath_door", "suite3_bath_door", "upper_service_door", "study_door")
+from worlds import CMA_DOORS as HOUSE_DOORS  # noqa: E402,F401
 
 
 def rot_z(a):
@@ -142,12 +139,17 @@ class Odometry:
 
 class HomeSim:
     def __init__(self, spawn="home", policy_dir=STUDENT_V1, seed=0, rgbd_hz=0.0, rgb_size=(640, 360),
-                 torque=20.0, odom_noise=True, house_runtime=True, doors_open=True, person=False):
+                 torque=20.0, odom_noise=True, house_runtime=True, doors_open=True, person=False, world="cma",
+                 camera=None):
+        from worlds import get_world
+        self.w = get_world(world)
+        self.gt, self.gt_dir = self.w.gt, self.w.gt_dir
+        house_runtime = house_runtime and self.w.house_runtime
         hook = None
         if person:
             from person import add_person
             hook = lambda spec: add_person(spec, start=(-30.0, -30.0, -20.0))   # parked out of sight until used
-        self.world = SW.SkillWorld(scene="house", torque=torque, seed=seed, spec_hook=hook)
+        self.world = SW.SkillWorld(scene=self.w.scene, torque=torque, seed=seed, spec_hook=hook)
         self.walker = None
         self.m, self.d, self.sens = self.world.model, self.world.data, self.world.sens
         self.ctl = RepoControlPolicy(mujoco, self.m)
@@ -164,6 +166,7 @@ class HomeSim:
         self.m.vis.global_.offwidth = max(self.m.vis.global_.offwidth, w)
         self.m.vis.global_.offheight = max(self.m.vis.global_.offheight, h)
         self._rgb_renderer = None
+        self.camera = camera                  # None = MuJoCo renders; or an external renderer (sim/isaac_home)
         self.doors_open = doors_open
         self.reset(spawn)
 
@@ -193,8 +196,9 @@ class HomeSim:
         p, R = self.sens.pose(self.d)
         return Pose(p, R)
 
-    def set_doors(self, frac=0.9, names=HOUSE_DOORS):
+    def set_doors(self, frac=0.9, names=None):
         """Open (frac of the hinge range, 0 = closed) the named doors; returns the names that exist."""
+        names = self.w.doors if names is None else names
         done = []
         for n in names:
             j = mujoco.mj_name2id(self.m, mujoco.mjtObj.mjOBJ_JOINT, f"{n}_j")
@@ -220,12 +224,35 @@ class HomeSim:
     def _odom_pose(self):
         return self.odom.pose(self.truth())
 
+    def room_at(self, xy=None):
+        """True room name of the robot (or of xy), for scoring."""
+        tp = self.truth()
+        xy = tp.p[:2] if xy is None else xy
+        return self.w.room_at(float(xy[0]), float(xy[1]), float(tp.p[2]) if xy is None else 0.0)
+
+    def gt_grid(self, floor=None):
+        """Ground-truth traversability grid of a floor (cached next to the ground truth)."""
+        import gt_grid
+        floor = floor or self.w.default_floor
+        return gt_grid.cached(self.m, self.d, floor, self.gt_dir, bounds=self.w.bounds(floor))
+
+    def camera_pose(self):
+        """World pose of the D435i camera (MuJoCo camera frame: -Z forward, +Y up)."""
+        cid = mujoco.mj_name2id(self.m, mujoco.mjtObj.mjOBJ_CAMERA, "d435i")
+        return self.d.cam_xpos[cid].copy(), self.d.cam_xmat[cid].reshape(3, 3).copy()
+
     def _depth(self):
+        if self.camera is not None:
+            depth = self.camera.depth(self, self.sens.cam)
+            return DepthFrame(self.t, self.sens.cam.add_noise(depth, self.sens.rng), self._odom_pose(), self.sens.cam)
         self.sens.renderer.update_scene(self.d, camera="d435i")
         depth = self.sens.cam.add_noise(self.sens.renderer.render(), self.sens.rng)
         return DepthFrame(self.t, depth, self._odom_pose(), self.sens.cam)
 
     def _rgbd(self):
+        if self.camera is not None:
+            rgb, depth = self.camera.rgbd(self, self.color)
+            return RGBDFrame(self.t, rgb, self.color.add_noise(depth, self.sens.rng), self._odom_pose(), self.color)
         if self._rgb_renderer is None:
             c = self.color
             self._rgb_renderer = mujoco.Renderer(self.m, c.height, c.width)

@@ -9,6 +9,7 @@ narrower, so they separate the seeds) -> every free cell joins the seed it reach
 Naming: each room type has object weights (bed -> bedroom, ...); the best-scoring type names the room, ties and
 empty rooms become "hallway" when elongated, else "room". The owner's labels override everything.
 """
+import heapq
 import math
 from dataclasses import dataclass, field
 
@@ -25,6 +26,21 @@ ROOM_TYPES = {
     "laundry": {"washing machine": 4},
     "office": {"desk": 3, "office chair": 2, "bookshelf": 0.8},
 }
+# owner's words -> room type (the longest match inside the label wins: "sala de jantar" before "sala")
+LABEL_TYPES = {"cozinha": "kitchen", "sala": "living room", "sala de estar": "living room", "sala de tv": "living room",
+               "sala de jantar": "dining room", "quarto": "bedroom", "suite": "bedroom", "suíte": "bedroom",
+               "banheiro": "bathroom", "lavabo": "bathroom", "lavanderia": "laundry", "area de servico": "laundry",
+               "área de serviço": "laundry", "escritorio": "office", "escritório": "office", "corredor": "hallway",
+               "varanda": "balcony", "sacada": "balcony", "deposito": "storage", "depósito": "storage",
+               "despensa": "storage"}
+
+
+def label_type(name):
+    t = (name or "").lower()
+    hits = [w for w in LABEL_TYPES if w in t]
+    return LABEL_TYPES[max(hits, key=len)] if hits else None
+
+
 TYPE_PT = {"kitchen": "cozinha", "living room": "sala", "dining room": "sala de jantar", "bedroom": "quarto",
            "bathroom": "banheiro", "laundry": "lavanderia", "office": "escritório", "hallway": "corredor",
            "room": "cômodo"}
@@ -51,26 +67,90 @@ class Room:
                                                       for k, v in self.neighbours.items()})
 
 
-def free_space(grid, close=2):
+def free_space(grid, close=2, voxels=None, robot_top=0.75):
+    """Free floor of the map. With the camera's voxel map: free where either sensor saw free floor and neither
+    sees an obstacle (the lidar alone sees over beds and under tables, and leaves small rooms half unknown)."""
     free = grid.free()
+    occ = grid.occupied()
+    if voxels is not None:
+        cam_occ = voxels.columns(0.06, robot_top)
+        free = (free | voxels.observed()) & ~cam_occ
+        occ = occ | cam_occ
     free = ndimage.binary_opening(free, iterations=1)
-    occ = ndimage.binary_dilation(grid.occupied(), iterations=close)
+    occ = ndimage.binary_dilation(occ, iterations=close)
     return free & ~occ
 
 
-def segment_rooms(grid, seed_clear=0.62, min_seed_area=1.0, min_room_area=2.5):
-    free = free_space(grid)
+def segment_rooms(grid, seed_clear=0.5, min_seed_area=0.25, min_room_area=1.5, voxels=None, label_xy=()):
+    """Defaults tuned on apartments (0.8 m doors, 3 m2 bathrooms) and the CMA house.
+    label_xy: where the owner named rooms during the tour; each is a seed of its own (a small room behind a door
+    gets its region even when it has no wide spot), unless it lies in a seed that already holds another label.
+    Growth is a watershed on the distance to obstacles: regions meet at the narrowest places (doorways), not
+    half-way between the seeds."""
+    free = free_space(grid, voxels=voxels)
     res = grid.res
     dist = ndimage.distance_transform_edt(free) * res
     seeds, n = ndimage.label(dist > seed_clear)
-    if n == 0:
-        return np.zeros_like(seeds)
-    areas = ndimage.sum(np.ones_like(seeds), seeds, index=np.arange(1, n + 1)) * res * res
+    areas = ndimage.sum(np.ones_like(seeds), seeds, index=np.arange(1, n + 1)) * res * res if n else np.zeros(0)
     keep = np.zeros(n + 1, bool)
     keep[1:] = areas >= min_seed_area
     seeds = np.where(keep[seeds], seeds, 0)
-    labels = geodesic_grow(seeds, free)
-    return merge_small(labels, free, min_room_area / (res * res))
+    nxt = int(seeds.max()) + 1
+    used = set()
+    for xy in label_xy:
+        i, j = grid.ij(np.asarray(xy))
+        if not grid.inside(i, j):
+            continue
+        s = int(seeds[i, j])
+        if s and s not in used:
+            used.add(s)
+            continue
+        k = int(0.25 / res)                               # a disk of free cells around the spot
+        ii, jj = np.mgrid[-k:k + 1, -k:k + 1]
+        m = ii ** 2 + jj ** 2 <= k * k
+        ii, jj = ii[m] + i, jj[m] + j
+        ok = grid.inside(ii, jj)
+        ii, jj = ii[ok], jj[ok]
+        ok = free[ii, jj] & (seeds[ii, jj] == 0)
+        seeds[ii[ok], jj[ok]] = nxt
+        used.add(nxt)
+        nxt += 1
+    if seeds.max() == 0:
+        return np.zeros_like(seeds)
+    labels = watershed(seeds, free, dist)
+    return merge_small(labels, free, min_room_area / (res * res), protect=used)
+
+
+def watershed(seeds, mask, dist):
+    """Priority flood from the seeds through `mask`, widest cells first (numba)."""
+    return _flood(seeds.astype(np.int64).copy(), mask, dist.astype(np.float64))
+
+
+def _flood_py(lab, mask, dist):
+        ny, nx = lab.shape
+        h = [(0.0, 0, 0)]
+        h.pop()
+        for i in range(ny):
+            for j in range(nx):
+                if lab[i, j] > 0:
+                    heapq.heappush(h, (-dist[i, j], i, j))
+        while len(h) > 0:
+            _, i, j = heapq.heappop(h)
+            L = lab[i, j]
+            for di in (-1, 0, 1):
+                for dj in (-1, 0, 1):
+                    a, b = i + di, j + dj
+                    if 0 <= a < ny and 0 <= b < nx and mask[a, b] and lab[a, b] == 0:
+                        lab[a, b] = L
+                        heapq.heappush(h, (-dist[a, b], a, b))
+        return lab
+
+
+try:
+    from numba import njit
+    _flood = njit(cache=True)(_flood_py)
+except ImportError:                                       # pragma: no cover
+    _flood = _flood_py
 
 
 def geodesic_grow(seeds, mask, max_iter=600):
@@ -86,10 +166,10 @@ def geodesic_grow(seeds, mask, max_iter=600):
     return lab
 
 
-def merge_small(lab, mask, min_cells):
+def merge_small(lab, mask, min_cells, protect=()):
     while True:
         ids, counts = np.unique(lab[lab > 0], return_counts=True)
-        small = ids[counts < min_cells]
+        small = ids[(counts < min_cells) & ~np.isin(ids, list(protect))]
         if len(small) == 0:
             return relabel(lab)
         s = small[0]
@@ -209,6 +289,9 @@ def describe(lab, grid, memory, floor, labels=None):
         if rid in byid:
             names = names if isinstance(names, list) else [names]
             byid[rid].label, byid[rid].aliases = names[0], names[1:]
+            lt = label_type(names[0])
+            if lt is not None:                          # the owner said what it is: that is its type
+                byid[rid].type = lt
     for o in objs:
         o.room = byid[obj_room[o.id]].name if obj_room.get(o.id) in byid else None
     return rooms

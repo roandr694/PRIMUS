@@ -108,13 +108,14 @@ class GTGrid:
         return cls(z["free"], z["origin"], float(z["res"]), float(z["floor_z"]), z["height"])
 
 
-def cached(m, d, floor, cache_dir, tag="doors_open"):
-    """GT grid of a floor with the scene in its current pose (doors!), cached next to house_gt.json under `tag`."""
+def cached(m, d, floor, cache_dir, tag="doors_open", bounds=None):
+    """GT grid of a floor with the scene in its current pose (doors!), cached next to the ground truth under `tag`.
+    bounds: (floor_z, (x0, x1, y0, y1)); default: the CMA house floors."""
     from pathlib import Path
     path = Path(cache_dir) / f"gt_grid_{floor}_{tag}.npz"
     if path.exists():
         return GTGrid.load(path)
-    z, b = FLOOR_BOUNDS[floor]
+    z, b = bounds if bounds is not None else FLOOR_BOUNDS[floor]
     g = GTGrid.build(m, d, z, b)
     g.save(path)
     return g

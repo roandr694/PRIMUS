@@ -26,6 +26,8 @@ def save_stack(stack, directory):
         (d / "memory.json").write_text(json.dumps(stack.memory.to_dict(), indent=1, ensure_ascii=False))
     if stack.scene is not None:
         stack.scene.save(d / "scene_graph.json")
+    for fid, vm in getattr(stack, "voxels", {}).items():     # camera 3-D occupancy (phase C)
+        vm.save(d / f"voxels_{fid}.npz")
     for fid, cm in stack.costmaps.items():              # camera obstacles of the tour (what the lidar misses)
         np.savez_compressed(d / f"camera_{fid}.npz", t_edge=cm.t_edge, terrain=cm.terrain, seen=cm.terrain_seen)
 
@@ -38,6 +40,11 @@ def load_stack(directory, memory=True, guard=True):
     d = Path(directory)
     stack = HomeStack.load(d, guard=guard)
     for fid in stack.slam.floors:
+        fv = d / f"voxels_{fid}.npz"
+        if fv.exists():
+            from .mapping.voxels import VoxelMap
+            stack.voxels[fid] = VoxelMap.load(fv)
+            stack.costmap(fid)
         f = d / f"camera_{fid}.npz"
         if f.exists():
             z = np.load(f)

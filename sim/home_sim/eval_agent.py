@@ -21,21 +21,19 @@ sys.path.insert(0, str(HERE.parents[1] / "sim" / "house"))
 from brain import persist  # noqa: E402
 from brain.agent.agent import Agent  # noqa: E402
 from runner import CollisionMonitor  # noqa: E402
-from semantics import room_at  # noqa: E402
-from world import GT_PATH, HomeSim  # noqa: E402
-
-GT = json.loads(GT_PATH.read_text())
+from world import HomeSim  # noqa: E402
 
 
 def in_room(names):
     names = [names] if isinstance(names, str) else names
-    return lambda sim, st: room_at(*sim.truth().p[:2], 0.0) in names, f"in {names}"
+    return lambda sim, st: (sim.room_at() in names) or any(
+        (sim.room_at() or "").startswith(n + " ") for n in names), f"in {names}"
 
 
 def near(cls, dist=1.3, room=None):
     def f(sim, st):
         xy = sim.truth().xy
-        for o in GT["objects"]:
+        for o in sim.gt["objects"]:
             if o["cls"] == cls and (room is None or o["room"] == room):
                 lo, hi = np.array(o["bbox"][0][:2]), np.array(o["bbox"][1][:2])
                 d = np.linalg.norm(np.maximum(0, np.maximum(lo - xy, xy - hi)))
@@ -74,6 +72,25 @@ CASES = [
     ("lembra deste lugar como cantinho da TV", (lambda sim, st: "cantinho da tv" in st.scene.places, "place saved"), 3),
     ("vai para a cozinha", in_room("kitchen"), 120),
     ("volta para o cantinho da TV", near("tv", 2.2), 150),
+]
+# apartments (InteriorAgent): rooms have plain types, classes are the detector's vocabulary
+APT_CASES = [
+    ("vai para a cozinha", in_room("kitchen"), 150),
+    ("vai para a sala e fica do lado do sofá", near("sofa", 1.4, room="living room"), 150),
+    ("fica mais baixo", leg(0.17, 0.24), 10),
+    ("fica na altura normal", leg(0.26, 0.34), 10),
+    ("vai para o quarto", in_room("bedroom"), 150),
+    ("vai até a cama", near("bed", 1.4), 150),
+    ("vou botar esse copo em cima de você", flag("carrying", True), 5),
+    ("vai para a sala de jantar", in_room(["dining room", "living room"]), 150),
+    ("já tirei o copo", flag("carrying", False), 5),
+    ("vai para perto da mesa de jantar", near("dining table", 1.4), 150),
+    ("onde você está?", (lambda sim, st: True, "answers"), 3),
+    ("vai para o banheiro", in_room("bathroom"), 150),
+    ("vai para a televisão", near("television", 2.0), 150),
+    ("lembra deste lugar como cantinho da TV", (lambda sim, st: "cantinho da tv" in st.scene.places, "place saved"), 3),
+    ("vai para o escritório", in_room("office"), 150),
+    ("volta para o cantinho da TV", near("television", 2.2), 150),
 ]
 LLM_CASES = [
     ("Primus, estou com fome, me espera perto da geladeira", near("fridge", 1.4), 150),
@@ -125,12 +142,19 @@ def run_case(sim, stack, agent, text, check, timeout, coll, verbose=True):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--map", default=str(HERE.parents[1] / "sim/models/house/robot_map_sem2"))
+    ap.add_argument("--world", default="cma")
+    ap.add_argument("--camera", default="mujoco", choices=["mujoco", "isaac"])
     ap.add_argument("--spawn", default="home")
     ap.add_argument("--llm", default=None)
     ap.add_argument("--only-llm", action="store_true")
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
-    sim = HomeSim(spawn=a.spawn, rgbd_hz=2.0)
+    camera = None
+    if a.camera == "isaac":
+        sys.path.insert(0, str(HERE.parents[1] / "sim" / "isaac_home"))
+        from camera_bridge import IsaacCamera
+        camera = IsaacCamera(a.world)
+    sim = HomeSim(spawn=a.spawn, rgbd_hz=2.0, world=a.world, camera=camera)
     stack = persist.load_stack(a.map)
     llm = None
     if a.llm:
@@ -144,7 +168,8 @@ def main():
         ev = sim.step(cmd, patch)
         stack.on_state(ev.state)
         cmd, patch = stack.step(sim.t)
-    cases = ([] if a.only_llm else CASES) + (LLM_CASES if llm is not None else [])
+    base = CASES if a.world == "cma" else APT_CASES
+    cases = ([] if a.only_llm else base) + (LLM_CASES if (llm is not None and a.world == "cma") else [])
     res = [run_case(sim, stack, agent, t, c, to, coll) for t, c, to in cases]
     n = sum(r["ok"] for r in res)
     print(f"agent: {n}/{len(res)} requests OK; collisions {coll.count}; falls {sum(r['fell'] for r in res)}")

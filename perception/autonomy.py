@@ -38,6 +38,7 @@ class Autonomy:
         self.emap, self.plan = ElevationMap(), SkillPlanner()
         self.plan.guard_on = guard
         self.ahead, self.behind, self.obstacle, self.last = [], [], (math.inf, math.inf), None
+        self.corridor_half_width = 0.35          # lidar guard corridor; a navigator narrows it in doorways
         if self.policy is not None:
             self.policy.reset()
 
@@ -50,7 +51,7 @@ class Autonomy:
 
     def on_lidar(self, points, contact_z, axle_xy, heading):
         pts = drop_ground(points, lambda q: self.emap.lookup(q)[0], contact_z)
-        self.obstacle = corridor_obstacle(pts, axle_xy, heading)
+        self.obstacle = corridor_obstacle(pts, axle_xy, heading, half_width=self.corridor_half_width)
 
     def map_ground(self, xy, fallback):
         h = self.emap.lookup(xy)[0]

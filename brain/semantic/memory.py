@@ -19,6 +19,10 @@ import numpy as np
 
 from .models import HOME_CLASSES, Detector, Embedder
 
+# minimum detector score per class, above the detector's global 0.15: on the photoreal Isaac renders of the
+# apartments most false objects were "wardrobe" (white walls, doors), "floor lamp" and "potted plant"
+CLASS_THRESHOLD = {"wardrobe": 0.30, "floor lamp": 0.25, "potted plant": 0.22, "bookshelf": 0.22}
+
 
 @dataclass
 class Obj:
@@ -119,6 +123,8 @@ class SemanticMemory:
                 self.last_people.append((np.median(P, 0), e, d[4]))
         cands = []
         for d in dets:
+            if d[4] < CLASS_THRESHOLD.get(self.classes[d[5]], 0.0):
+                continue                                     # classes OWL-ViT over-fires on (walls, doors, curtains)
             P = self._box_points(frame, d, to_map)
             if P is None:
                 continue

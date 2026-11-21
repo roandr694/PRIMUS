@@ -44,14 +44,13 @@ class Walker:
     def __init__(self, sim, waypoints, speed=0.8, pause=2.0, start_delay=3.0, floor="social"):
         import json
         import gt_grid
-        from world import GT_PATH
         from tour import cost_from_free
         sys_path_brain()
         from brain.nav.astar import astar, simplify
         self.sim, self.speed, self.pause, self.start_delay = sim, speed, pause, start_delay
         self.m, self.d = sim.m, sim.d
         self.mocap = self.m.body_mocapid[mujoco.mj_name2id(self.m, mujoco.mjtObj.mjOBJ_BODY, "person")]
-        self.grid = gt_grid.cached(self.m, self.d, floor, GT_PATH.parent)
+        self.grid = sim.gt_grid(floor if floor in sim.gt["floors"] else None)
         cost = cost_from_free(self.grid.free, self.grid.res, robot_r=0.25, soft=0.5)
         self.path = [np.asarray(waypoints[0], float)]
         for a, b in zip(waypoints[:-1], waypoints[1:]):

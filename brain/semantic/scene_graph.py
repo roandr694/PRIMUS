@@ -76,7 +76,8 @@ class SceneGraph:
         mem = stack.memory
         for fid, fl in stack.slam.floors.items():
             g = fl.grid
-            lab = R.segment_rooms(g)
+            lab = R.segment_rooms(g, voxels=getattr(stack, "voxels", {}).get(fid),
+                                  label_xy=[xy for xy, _ in self.labels.get(fid, [])])
             self.regions[fid], self.grids[fid] = lab, g
             labels = {}
             for xy, name in self.labels.get(fid, []):
