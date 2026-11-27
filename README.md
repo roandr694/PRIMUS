@@ -9,6 +9,10 @@ simulation to the physical robot.
 
 Demo (simulation, sensor-realistic state): [`docs/demo_arena.mp4`](docs/demo_arena.mp4)
 
+Project pages: [overview and 3D model](https://roandr694.github.io/portfolio/primus/) ·
+[build guide](https://roandr694.github.io/portfolio/primus-assembly/) (an animated, step-by-step assembly generated from
+the CAD, with the bill of materials) · [control and learning](https://roandr694.github.io/portfolio/primus-control/).
+
 ## Getting started
 
 ```bash
